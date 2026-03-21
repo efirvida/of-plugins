@@ -580,7 +580,13 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
 
         if (locationType_ == LocationType::globalData && Pstream::parRun())
         {
-            Pstream::broadcast(dataBuffer_);
+            const std::size_t nBroadcast =
+                static_cast<std::size_t>(precice_.getDataDimensions(meshName_, couplingDataReader->dataName()));
+
+            for (std::size_t valueI = 0; valueI < nBroadcast; ++valueI)
+            {
+                Pstream::broadcast(dataBuffer_[valueI]);
+            }
         }
 
         // Apply flip normal if required
@@ -589,7 +595,7 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
             precice::span<double> globalDataSpan
             {
                 dataBuffer_.data(),
-                precice_.getDataDimensions(meshName_, couplingDataReader->dataName())
+                static_cast<std::size_t>(precice_.getDataDimensions(meshName_, couplingDataReader->dataName()))
             };
             couplingDataReader->applyFlipNormal(globalDataSpan);
         }
@@ -617,20 +623,17 @@ void preciceAdapter::Interface::writeCouplingData()
 
         if (locationType_ == LocationType::globalData && Pstream::parRun())
         {
-            std::vector<double> masterBuffer(nWrittenData, 0.0);
+            std::vector<double> localBuffer(dataBuffer_.begin(), dataBuffer_.begin() + nWrittenData);
 
-            if (Pstream::master())
+            for (std::size_t valueI = 0; valueI < nWrittenData; ++valueI)
             {
-                std::copy_n(dataBuffer_.begin(), nWrittenData, masterBuffer.begin());
+                Pstream::broadcast(dataBuffer_[valueI]);
             }
-
-            Pstream::broadcast(masterBuffer);
 
             scalar maxDifference = 0.0;
             for (std::size_t valueI = 0; valueI < nWrittenData; ++valueI)
             {
-                maxDifference = max(maxDifference, mag(dataBuffer_[valueI] - masterBuffer[valueI]));
-                dataBuffer_[valueI] = masterBuffer[valueI];
+                maxDifference = max(maxDifference, mag(localBuffer[valueI] - dataBuffer_[valueI]));
             }
             reduce(maxDifference, maxOp<scalar>());
 
@@ -680,7 +683,7 @@ preciceAdapter::Interface::~Interface()
     couplingDataWriters_.clear();
 }
 
-LocationType preciceAdapter::Interface::locationType() const
+preciceAdapter::LocationType preciceAdapter::Interface::locationType() const
 {
     return locationType_;
 }
