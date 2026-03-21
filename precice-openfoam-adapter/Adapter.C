@@ -1508,28 +1508,12 @@ void preciceAdapter::Adapter::teardown()
         delete meshOldPoints_;
     }
 
-    // Delete the CHT module
-    if (nullptr != CHT_)
-    {
-        DEBUG(adapterInfo("Destroying the CHT module..."));
-        delete CHT_;
-        CHT_ = nullptr;
-    }
-
     // Delete the FSI module
     if (nullptr != FSI_)
     {
         DEBUG(adapterInfo("Destroying the FSI module..."));
         delete FSI_;
         FSI_ = nullptr;
-    }
-
-    // Delete the FF module
-    if (nullptr != FF_)
-    {
-        DEBUG(adapterInfo("Destroying the FF module..."));
-        delete FF_;
-        FF_ = nullptr;
     }
 
     // Delete the Generic module
