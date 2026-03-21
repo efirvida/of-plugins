@@ -5,6 +5,9 @@
 #include "Utilities.H"
 #include "faceTriangulation.H"
 #include "cellSet.H"
+#include "Pstream.H"
+
+#include <algorithm>
 
 
 using namespace Foam;
@@ -49,6 +52,10 @@ preciceAdapter::Interface::Interface(
     {
         locationType_ = LocationType::volumeCenters;
     }
+    else if (locationsType == "globalData" || locationsType == "global")
+    {
+        locationType_ = LocationType::globalData;
+    }
     else
     {
         adapterInfo("Interface points location type \""
@@ -59,7 +66,7 @@ preciceAdapter::Interface::Interface(
 
 
     // For every patch that participates in the coupling
-    for (uint j = 0; j < patchNames.size(); j++)
+    for (uint j = 0; j < patchNames.size() && locationType_ != LocationType::globalData; j++)
     {
         // Get the patchID
         int patchID = mesh.boundaryMesh().findPatchID(patchNames.at(j));
@@ -430,6 +437,18 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
         // Pass the mesh vertices information to preCICE
         precice_.setMeshVertices(meshName_, vertices, vertexIDs_);
     }
+    else if (locationType_ == LocationType::globalData)
+    {
+        numDataLocations_ = 1;
+        vertexIDs_.clear();
+
+        if (Pstream::master())
+        {
+            std::vector<double> vertices(dim_, 0.0);
+            vertexIDs_.resize(1);
+            precice_.setMeshVertices(meshName_, vertices, vertexIDs_);
+        }
+    }
 }
 
 
@@ -548,15 +567,36 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
         // nReadData == vertexIDs_.size() * (1 + (dim_ - 1) * static_cast<int>(couplingDataReader->hasVectorData()));
 
         precice::span<double> dataSpanRead {dataBuffer_.data(), nReadData};
-        precice_.readData(
-            meshName_,
-            couplingDataReader->dataName(),
-            vertexIDs_,
-            relativeReadTime,
-            dataSpanRead);
+
+        if (locationType_ != LocationType::globalData || Pstream::master())
+        {
+            precice_.readData(
+                meshName_,
+                couplingDataReader->dataName(),
+                vertexIDs_,
+                relativeReadTime,
+                dataSpanRead);
+        }
+
+        if (locationType_ == LocationType::globalData && Pstream::parRun())
+        {
+            Pstream::broadcast(dataBuffer_);
+        }
 
         // Apply flip normal if required
-        couplingDataReader->applyFlipNormal(dataSpanRead);
+        if (locationType_ == LocationType::globalData)
+        {
+            precice::span<double> globalDataSpan
+            {
+                dataBuffer_.data(),
+                precice_.getDataDimensions(meshName_, couplingDataReader->dataName())
+            };
+            couplingDataReader->applyFlipNormal(globalDataSpan);
+        }
+        else
+        {
+            couplingDataReader->applyFlipNormal(dataSpanRead);
+        }
 
         // Read the received data from the buffer
         couplingDataReader->read(dataBuffer_.data(), dim_);
@@ -575,17 +615,51 @@ void preciceAdapter::Interface::writeCouplingData()
         // Write the data into the adapter's buffer
         auto nWrittenData = couplingDataWriter->write(dataBuffer_.data(), meshConnectivity_, dim_);
 
-        precice::span<double> dataSpanWritten {dataBuffer_.data(), nWrittenData};
+        if (locationType_ == LocationType::globalData && Pstream::parRun())
+        {
+            std::vector<double> masterBuffer(nWrittenData, 0.0);
+
+            if (Pstream::master())
+            {
+                std::copy_n(dataBuffer_.begin(), nWrittenData, masterBuffer.begin());
+            }
+
+            Pstream::broadcast(masterBuffer);
+
+            scalar maxDifference = 0.0;
+            for (std::size_t valueI = 0; valueI < nWrittenData; ++valueI)
+            {
+                maxDifference = max(maxDifference, mag(dataBuffer_[valueI] - masterBuffer[valueI]));
+                dataBuffer_[valueI] = masterBuffer[valueI];
+            }
+            reduce(maxDifference, maxOp<scalar>());
+
+            if (maxDifference > SMALL)
+            {
+                adapterInfo(
+                    "Global data \"" + couplingDataWriter->dataName()
+                        + "\" differs across MPI ranks. Use a single shared value on all ranks before writing to preCICE.",
+                    "error");
+            }
+        }
+
+        const std::size_t nPreciceWriteData =
+            vertexIDs_.size() * precice_.getDataDimensions(meshName_, couplingDataWriter->dataName());
+
+        precice::span<double> dataSpanWritten {dataBuffer_.data(), nPreciceWriteData};
 
         // Apply flip normal if required
         couplingDataWriter->applyFlipNormal(dataSpanWritten);
 
         // Make preCICE write vector or scalar data
-        precice_.writeData(
-            meshName_,
-            couplingDataWriter->dataName(),
-            vertexIDs_,
-            dataSpanWritten);
+        if (locationType_ != LocationType::globalData || Pstream::master())
+        {
+            precice_.writeData(
+                meshName_,
+                couplingDataWriter->dataName(),
+                vertexIDs_,
+                dataSpanWritten);
+        }
     }
 }
 
@@ -604,4 +678,14 @@ preciceAdapter::Interface::~Interface()
         delete couplingDataWriters_.at(i);
     }
     couplingDataWriters_.clear();
+}
+
+LocationType preciceAdapter::Interface::locationType() const
+{
+    return locationType_;
+}
+
+unsigned int preciceAdapter::Interface::dataDimensions(const std::string& dataName) const
+{
+    return precice_.getDataDimensions(meshName_, dataName);
 }

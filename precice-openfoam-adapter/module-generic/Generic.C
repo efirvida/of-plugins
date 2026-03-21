@@ -26,6 +26,18 @@ bool preciceAdapter::Generic::GenericInterface::configure(const IOdictionary& ad
     }
     DEBUG(adapterInfo("    Available volVectorFields: " + availableVolVectorFields));
 
+    for (const auto& solver_name : mesh_.time().sortedNames<uniformDimensionedScalarField>())
+    {
+        availableUniformScalarFields += solver_name + " ";
+    }
+    DEBUG(adapterInfo("    Available uniformDimensionedScalarFields: " + availableUniformScalarFields));
+
+    for (const auto& solver_name : mesh_.time().sortedNames<uniformDimensionedVectorField>())
+    {
+        availableUniformVectorFields += solver_name + " ";
+    }
+    DEBUG(adapterInfo("    Available uniformDimensionedVectorFields: " + availableUniformVectorFields));
+
     // Read the Generic-module specific options from the adapter's configuration file
     if (!readConfig(adapterConfig))
     {
@@ -44,12 +56,31 @@ bool preciceAdapter::Generic::GenericInterface::readConfig(const IOdictionary& a
 bool preciceAdapter::Generic::GenericInterface::addWriters(const preciceAdapter::FieldConfig& fieldConfig, Interface* interface)
 {
     bool found = false;
+    const bool isGlobalData = interface->locationType() == LocationType::globalData;
 
     // Force to use the new schema with the Generic module
     if (fieldConfig.solver_name != "Undefined (legacy mode)")
     {
-        // Determine type of field
-        if (mesh_.foundObject<volScalarField>(fieldConfig.solver_name))
+        if (isGlobalData)
+        {
+            if (mesh_.time().foundObject<uniformDimensionedScalarField>(fieldConfig.solver_name)
+                || interface->dataDimensions(fieldConfig.name) == 1)
+            {
+                found = true;
+                interface->addCouplingDataWriter(
+                    fieldConfig,
+                    new GlobalScalarFieldCoupler(mesh_, fieldConfig));
+            }
+            else if (mesh_.time().foundObject<uniformDimensionedVectorField>(fieldConfig.solver_name)
+                     || interface->dataDimensions(fieldConfig.name) > 1)
+            {
+                found = true;
+                interface->addCouplingDataWriter(
+                    fieldConfig,
+                    new GlobalVectorFieldCoupler(mesh_, fieldConfig));
+            }
+        }
+        else if (mesh_.foundObject<volScalarField>(fieldConfig.solver_name))
         {
             found = true;
             interface->addCouplingDataWriter(
@@ -67,7 +98,7 @@ bool preciceAdapter::Generic::GenericInterface::addWriters(const preciceAdapter:
         {
             found = false;
             std::string msg = "Generic module: Data \"" + fieldConfig.name + "\", solver name: \"" + fieldConfig.solver_name + "\" not found!\n";
-            msg += "Available fields: " + availableVolScalarFields + availableVolVectorFields;
+            msg += "Available fields: " + availableVolScalarFields + availableVolVectorFields + availableUniformScalarFields + availableUniformVectorFields;
             adapterInfo(msg, "warning");
         }
     }
@@ -82,12 +113,31 @@ bool preciceAdapter::Generic::GenericInterface::addWriters(const preciceAdapter:
 bool preciceAdapter::Generic::GenericInterface::addReaders(const preciceAdapter::FieldConfig& fieldConfig, Interface* interface)
 {
     bool found = false;
+    const bool isGlobalData = interface->locationType() == LocationType::globalData;
 
     // Force to use the new schema with the Generic modul
     if (fieldConfig.solver_name != "Undefined (legacy mode)")
     {
-        // Determine type of field
-        if (mesh_.foundObject<volScalarField>(fieldConfig.solver_name))
+        if (isGlobalData)
+        {
+            if (mesh_.time().foundObject<uniformDimensionedScalarField>(fieldConfig.solver_name)
+                || interface->dataDimensions(fieldConfig.name) == 1)
+            {
+                found = true;
+                interface->addCouplingDataReader(
+                    fieldConfig,
+                    new GlobalScalarFieldCoupler(mesh_, fieldConfig));
+            }
+            else if (mesh_.time().foundObject<uniformDimensionedVectorField>(fieldConfig.solver_name)
+                     || interface->dataDimensions(fieldConfig.name) > 1)
+            {
+                found = true;
+                interface->addCouplingDataReader(
+                    fieldConfig,
+                    new GlobalVectorFieldCoupler(mesh_, fieldConfig));
+            }
+        }
+        else if (mesh_.foundObject<volScalarField>(fieldConfig.solver_name))
         {
             found = true;
             interface->addCouplingDataReader(
@@ -105,7 +155,7 @@ bool preciceAdapter::Generic::GenericInterface::addReaders(const preciceAdapter:
         {
             found = false;
             std::string msg = "Generic module: Data \"" + fieldConfig.name + "\" (solver name: \"" + fieldConfig.solver_name + "\") not found!\n";
-            msg += "Available fields: " + availableVolScalarFields + availableVolVectorFields;
+            msg += "Available fields: " + availableVolScalarFields + availableVolVectorFields + availableUniformScalarFields + availableUniformVectorFields;
             adapterInfo(msg, "warning");
         }
     }

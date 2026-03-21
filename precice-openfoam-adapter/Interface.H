@@ -19,6 +19,8 @@ struct FieldConfig
     std::string solver_name;
     std::string operation;
     bool flip_normal;
+    Foam::dimensionSet dimensions;
+    bool has_dimensions = false;
 };
 
 class Interface
@@ -112,6 +114,12 @@ public:
     //- Call write() on each registered couplingDataWriter to extract the boundary
     //  data and write them into the buffer
     void writeCouplingData();
+
+    //- Return the configured interface location type
+    LocationType locationType() const;
+
+    //- Return the preCICE data dimensions for a configured data set
+    unsigned int dataDimensions(const std::string& dataName) const;
 
     //- Destructor
     ~Interface();

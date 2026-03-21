@@ -45,6 +45,7 @@ void preciceAdapter::Adapter::readFieldConfigs(const std::string& listName, Foam
                 fieldConfig.name = dict.get<word>("name"); // The 'name' entry is mandatory.
                 fieldConfig.solver_name = dict.lookupOrDefault<word>("solver_name", fieldConfig.name);
                 fieldConfig.operation = dict.lookupOrDefault<word>("operation", "value");
+                fieldConfig.has_dimensions = dict.readIfPresent("dimensions", fieldConfig.dimensions);
                 try
                 {
                     fieldConfig.flip_normal = dict.lookupOrDefault<bool>("flip-normal", false);
@@ -61,6 +62,7 @@ void preciceAdapter::Adapter::readFieldConfigs(const std::string& listName, Foam
                 fieldConfig.solver_name = "Undefined (legacy mode)";
                 fieldConfig.operation = "Undefined (legacy mode)";
                 fieldConfig.flip_normal = false;
+                fieldConfig.has_dimensions = false;
             }
 
             configs.push_back(fieldConfig);
@@ -70,6 +72,7 @@ void preciceAdapter::Adapter::readFieldConfigs(const std::string& listName, Foam
             DEBUG(adapterInfo("        solver_name: " + fieldConfig.solver_name));
             DEBUG(adapterInfo("        operation  : " + fieldConfig.operation));
             DEBUG(adapterInfo("        flip-normal: " + std::string(fieldConfig.flip_normal ? "true" : "false")));
+            DEBUG(adapterInfo("        has dimensions: " + std::string(fieldConfig.has_dimensions ? "true" : "false")));
         }
         stream >> _t; // Last token ')'
     }
@@ -112,19 +115,9 @@ void preciceAdapter::Adapter::configFileRead()
         DEBUG(adapterInfo("  - " + module + "\n"));
 
         // Set the modules switches
-        if (module == "CHT")
-        {
-            CHTenabled_ = true;
-        }
-
         if (module == "FSI")
         {
             FSIenabled_ = true;
-        }
-
-        if (module == "FF")
-        {
-            FFenabled_ = true;
         }
 
         if (module == "generic")
@@ -175,8 +168,25 @@ void preciceAdapter::Adapter::configFileRead()
                 }
                 DEBUG(adapterInfo("    connectivity : " + std::to_string(interfaceConfig.meshConnectivity)));
 
+                const bool isGlobalData =
+                    interfaceConfig.locationsType == "globalData"
+                 || interfaceConfig.locationsType == "global";
+
                 DEBUG(adapterInfo("    patches      : "));
-                auto patches = interfaceDict.get<wordList>("patches");
+                auto patches = interfaceDict.lookupOrDefault<wordList>("patches", wordList());
+
+                if (!isGlobalData && patches.empty())
+                {
+                    adapterInfo("Interfaces with locations != globalData require a non-empty patches list.", "error");
+                    return;
+                }
+
+                if (isGlobalData && !patches.empty())
+                {
+                    adapterInfo("The globalData location does not use OpenFOAM patches. Remove the patches entry from this interface.", "error");
+                    return;
+                }
+
                 for (auto patch : patches)
                 {
                     interfaceConfig.patchNames.push_back(patch);
@@ -190,6 +200,18 @@ void preciceAdapter::Adapter::configFileRead()
                 {
                     interfaceConfig.cellSetNames.push_back(cellSet);
                     DEBUG(adapterInfo("      - " + cellSet));
+                }
+
+                if (isGlobalData && !interfaceConfig.cellSetNames.empty())
+                {
+                    adapterInfo("The globalData location does not support cellSets.", "error");
+                    return;
+                }
+
+                if (isGlobalData && interfaceConfig.meshConnectivity)
+                {
+                    adapterInfo("The globalData location does not support mesh connectivity.", "error");
+                    return;
                 }
 
                 if (!interfaceConfig.cellSetNames.empty() && !(interfaceConfig.locationsType == "volumeCenters" || interfaceConfig.locationsType == "volumeCentres"))
@@ -231,19 +253,6 @@ void preciceAdapter::Adapter::configFileRead()
         }
     }
 
-    // If the CHT module is enabled, create it, read the
-    // CHT-specific options and configure it.
-    if (CHTenabled_)
-    {
-        CHT_ = new CHT::ConjugateHeatTransfer(mesh_);
-        if (!CHT_->configure(preciceDict))
-        {
-            adapterInfo("There was an error while configuring the CHT module",
-                        "error");
-            return;
-        }
-    }
-
     // If the FSI module is enabled, create it, read the
     // FSI-specific options and configure it.
     if (FSIenabled_)
@@ -257,20 +266,9 @@ void preciceAdapter::Adapter::configFileRead()
         }
     }
 
-    if (FFenabled_)
-    {
-        FF_ = new FF::FluidFluid(mesh_);
-        if (!FF_->configure(preciceDict))
-        {
-            adapterInfo("There was an error while configuring the FF module",
-                        "error");
-            return;
-        }
-    }
-
     // NOTE: Create your module and read any options specific to it here
 
-    if (!CHTenabled_ && !FSIenabled_ && !FFenabled_ && !genericModuleEnabled_) // NOTE: Add your new switch here
+    if (!FSIenabled_ && !genericModuleEnabled_) // NOTE: Add your new switch here
     {
         adapterInfo("No module is enabled.", "error");
         return;
@@ -334,20 +332,8 @@ try
 
             unsigned int inModules = 0;
 
-            // Add CHT-related coupling data writers
-            if (CHTenabled_ && CHT_->addWriters(fieldConfig, interface))
-            {
-                inModules++;
-            }
-
             // Add FSI-related coupling data writers
             if (FSIenabled_ && FSI_->addWriters(fieldConfig, interface))
-            {
-                inModules++;
-            }
-
-            // Add FF-related coupling data writers
-            if (FFenabled_ && FF_->addWriters(fieldConfig, interface))
             {
                 inModules++;
             }
@@ -386,20 +372,8 @@ try
 
             unsigned int inModules = 0;
 
-            // Add CHT-related coupling data readers
-            if (CHTenabled_ && CHT_->addReaders(fieldConfig, interface))
-            {
-                inModules++;
-            }
-
             // Add FSI-related coupling data readers
             if (FSIenabled_ && FSI_->addReaders(fieldConfig, interface))
-            {
-                inModules++;
-            }
-
-            // Add FF-related coupling data readers
-            if (FFenabled_ && FF_->addReaders(fieldConfig, interface))
             {
                 inModules++;
             }

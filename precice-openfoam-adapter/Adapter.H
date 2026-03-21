@@ -3,14 +3,8 @@
 
 #include "Interface.H"
 
-// Conjugate Heat Transfer module
-#include "CHT/CHT.H"
-
 // Fluid-Structure Interaction module
 #include "FSI/FSI.H"
-
-// Fluid-Fluid module
-#include "FF/FF.H"
 
 #include "module-generic/Generic.H"
 
@@ -99,14 +93,8 @@ private:
     //- Should the (fixed) timestep be stored and used?
     bool useStoredTimestep_ = false;
 
-    //- Switch to enable the ConjugateHeatTransfer module
-    bool CHTenabled_ = false;
-
     //- Switch to enable the FluidStructureInteraction module
     bool FSIenabled_ = false;
-
-    //- Switch to enable the FluidFluid module
-    bool FFenabled_ = false;
 
     // NOTE: Add a switch for your new module here
 
@@ -122,14 +110,8 @@ private:
     //- preCICE solver interface initialized
     bool preciceInitialized_ = false;
 
-    //- Conjugate Heat Transfer module object
-    CHT::ConjugateHeatTransfer* CHT_ = nullptr;
-
     //- Fluid-Structure Interaction module object
     FSI::FluidStructureInteraction* FSI_ = nullptr;
-
-    //- Fluid-Fluid module object
-    FF::FluidFluid* FF_ = nullptr;
 
     //- Generic module object
     Generic::GenericInterface* Generic_ = nullptr;

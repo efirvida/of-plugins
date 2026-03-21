@@ -6,6 +6,9 @@
 
 #include "fvCFD.H"
 #include "cellSet.H"
+#include "uniformDimensionedFields.H"
+
+#include <memory>
 
 namespace preciceAdapter
 {
@@ -48,6 +51,50 @@ public:
     std::string getDataName() const;
 
     virtual ~VectorFieldCoupler() {};
+};
+
+class GlobalScalarFieldCoupler : public CouplingDataUser
+{
+protected:
+    const Foam::Time& runTime_;
+    const preciceAdapter::FieldConfig& fieldConfig_;
+    mutable Foam::uniformDimensionedScalarField* scalarField_ = nullptr;
+    mutable std::unique_ptr<Foam::uniformDimensionedScalarField> scalarFieldOwning_;
+
+    void bindField() const;
+
+public:
+    GlobalScalarFieldCoupler(const Foam::fvMesh& mesh, const preciceAdapter::FieldConfig& fieldConfig);
+
+    void initialize();
+    std::size_t write(double* buffer, bool meshConnectivity, const unsigned int dim);
+    void read(double* buffer, const unsigned int dim);
+    bool isLocationTypeSupported(const bool meshConnectivity) const;
+    std::string getDataName() const;
+
+    virtual ~GlobalScalarFieldCoupler() {};
+};
+
+class GlobalVectorFieldCoupler : public CouplingDataUser
+{
+protected:
+    const Foam::Time& runTime_;
+    const preciceAdapter::FieldConfig& fieldConfig_;
+    mutable Foam::uniformDimensionedVectorField* vectorField_ = nullptr;
+    mutable std::unique_ptr<Foam::uniformDimensionedVectorField> vectorFieldOwning_;
+
+    void bindField() const;
+
+public:
+    GlobalVectorFieldCoupler(const Foam::fvMesh& mesh, const preciceAdapter::FieldConfig& fieldConfig);
+
+    void initialize();
+    std::size_t write(double* buffer, bool meshConnectivity, const unsigned int dim);
+    void read(double* buffer, const unsigned int dim);
+    bool isLocationTypeSupported(const bool meshConnectivity) const;
+    std::string getDataName() const;
+
+    virtual ~GlobalVectorFieldCoupler() {};
 };
 
 }

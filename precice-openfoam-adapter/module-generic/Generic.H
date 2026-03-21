@@ -34,6 +34,8 @@ protected:
     //- List of available fields in the OpenFOAM object registry
     std::string availableVolScalarFields;
     std::string availableVolVectorFields;
+    std::string availableUniformScalarFields;
+    std::string availableUniformVectorFields;
 
 public:
     //- Constructor

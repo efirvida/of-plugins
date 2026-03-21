@@ -1,6 +1,7 @@
 #include "ReadWrite.H"
 #include "primitivePatchInterpolation.H"
 #include "fvCFD.H"
+#include "uniformDimensionedFields.H"
 
 #include "fixedValueFvPatchFields.H"
 #include "fixedGradientFvPatchFields.H"
@@ -399,6 +400,176 @@ bool preciceAdapter::Generic::VectorFieldCoupler::isLocationTypeSupported(const 
 }
 
 std::string preciceAdapter::Generic::VectorFieldCoupler::getDataName() const
+{
+    return fieldConfig_.name;
+}
+
+//----- preciceAdapter::Generic::GlobalScalarFieldCoupler ------------------------------
+
+preciceAdapter::Generic::GlobalScalarFieldCoupler::GlobalScalarFieldCoupler(
+    const Foam::fvMesh& mesh,
+    const preciceAdapter::FieldConfig& fieldConfig)
+: runTime_(mesh.time()),
+  fieldConfig_(fieldConfig)
+{
+    dataType_ = scalar;
+}
+
+void preciceAdapter::Generic::GlobalScalarFieldCoupler::bindField() const
+{
+    if (scalarField_ != nullptr)
+    {
+        return;
+    }
+
+    if (runTime_.foundObject<uniformDimensionedScalarField>(fieldConfig_.solver_name))
+    {
+        scalarField_ =
+            &runTime_.lookupObjectRef<uniformDimensionedScalarField>(fieldConfig_.solver_name);
+        return;
+    }
+
+    const dimensionSet fieldDimensions =
+        fieldConfig_.has_dimensions
+      ? fieldConfig_.dimensions
+      : dimensionSet(0, 0, 0, 0, 0, 0, 0);
+
+    if (!fieldConfig_.has_dimensions)
+    {
+        adapterInfo(
+            "Generic module: Creating global scalar field \"" + fieldConfig_.solver_name
+                + "\" without explicit dimensions. Add a dimensions entry to avoid ambiguous units.",
+            "warning");
+    }
+
+    scalarFieldOwning_.reset(new uniformDimensionedScalarField(
+        IOobject(
+            fieldConfig_.solver_name,
+            runTime_.constant(),
+            runTime_,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE),
+        dimensionedScalar(fieldConfig_.solver_name, fieldDimensions, 0.0)));
+
+    scalarField_ = scalarFieldOwning_.get();
+}
+
+void preciceAdapter::Generic::GlobalScalarFieldCoupler::initialize()
+{
+    bindField();
+}
+
+std::size_t preciceAdapter::Generic::GlobalScalarFieldCoupler::write(double* buffer, bool, const unsigned int)
+{
+    bindField();
+    buffer[0] = scalarField_->value();
+    return 1;
+}
+
+void preciceAdapter::Generic::GlobalScalarFieldCoupler::read(double* buffer, const unsigned int)
+{
+    bindField();
+    scalarField_->value() = buffer[0];
+}
+
+bool preciceAdapter::Generic::GlobalScalarFieldCoupler::isLocationTypeSupported(const bool meshConnectivity) const
+{
+    return !meshConnectivity && this->locationType_ == LocationType::globalData;
+}
+
+std::string preciceAdapter::Generic::GlobalScalarFieldCoupler::getDataName() const
+{
+    return fieldConfig_.name;
+}
+
+//----- preciceAdapter::Generic::GlobalVectorFieldCoupler ------------------------------
+
+preciceAdapter::Generic::GlobalVectorFieldCoupler::GlobalVectorFieldCoupler(
+    const Foam::fvMesh& mesh,
+    const preciceAdapter::FieldConfig& fieldConfig)
+: runTime_(mesh.time()),
+  fieldConfig_(fieldConfig)
+{
+    dataType_ = vector;
+}
+
+void preciceAdapter::Generic::GlobalVectorFieldCoupler::bindField() const
+{
+    if (vectorField_ != nullptr)
+    {
+        return;
+    }
+
+    if (runTime_.foundObject<uniformDimensionedVectorField>(fieldConfig_.solver_name))
+    {
+        vectorField_ =
+            &runTime_.lookupObjectRef<uniformDimensionedVectorField>(fieldConfig_.solver_name);
+        return;
+    }
+
+    const dimensionSet fieldDimensions =
+        fieldConfig_.has_dimensions
+      ? fieldConfig_.dimensions
+      : dimensionSet(0, 0, 0, 0, 0, 0, 0);
+
+    if (!fieldConfig_.has_dimensions)
+    {
+        adapterInfo(
+            "Generic module: Creating global vector field \"" + fieldConfig_.solver_name
+                + "\" without explicit dimensions. Add a dimensions entry to avoid ambiguous units.",
+            "warning");
+    }
+
+    vectorFieldOwning_.reset(new uniformDimensionedVectorField(
+        IOobject(
+            fieldConfig_.solver_name,
+            runTime_.constant(),
+            runTime_,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE),
+        dimensionedVector(fieldConfig_.solver_name, fieldDimensions, Foam::vector::zero)));
+
+    vectorField_ = vectorFieldOwning_.get();
+}
+
+void preciceAdapter::Generic::GlobalVectorFieldCoupler::initialize()
+{
+    bindField();
+}
+
+std::size_t preciceAdapter::Generic::GlobalVectorFieldCoupler::write(double* buffer, bool, const unsigned int dim)
+{
+    bindField();
+
+    const vector value = vectorField_->value();
+    buffer[0] = value.x();
+    buffer[1] = value.y();
+
+    if (dim == 3)
+    {
+        buffer[2] = value.z();
+    }
+
+    return dim;
+}
+
+void preciceAdapter::Generic::GlobalVectorFieldCoupler::read(double* buffer, const unsigned int dim)
+{
+    bindField();
+
+    vector value = vectorField_->value();
+    value.x() = buffer[0];
+    value.y() = buffer[1];
+    value.z() = (dim == 3) ? buffer[2] : 0.0;
+    vectorField_->value() = value;
+}
+
+bool preciceAdapter::Generic::GlobalVectorFieldCoupler::isLocationTypeSupported(const bool meshConnectivity) const
+{
+    return !meshConnectivity && this->locationType_ == LocationType::globalData;
+}
+
+std::string preciceAdapter::Generic::GlobalVectorFieldCoupler::getDataName() const
 {
     return fieldConfig_.name;
 }
