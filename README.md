@@ -26,7 +26,8 @@ No submodules are used. All code is self-contained and built with `wmake`.
     `uniformDimensionedScalarField` (typically updated by preCICE adapter).
 - `precice-openfoam-adapter/`
   - **Diverging fork** of [precice/openfoam-adapter](https://github.com/precice/openfoam-adapter)
-  - Embedded here for simultaneous development and modifications.
+  - **FSI-only version**: CHT (heat transfer) and FF (free-surface) modules removed.
+  - Embedded here for simultaneous development with custom FSI modifications.
   - See [precice-openfoam-adapter/README.md](precice-openfoam-adapter/README.md) for original documentation.
   - **Note**: This copy is independent — changes here do **not** automatically sync upstream.
 
