@@ -165,11 +165,11 @@ Foam::scalar Foam::Function1Types::preciceOmega::value(const scalar t) const
     initField();
     
     const scalar omega = omegaField_->value();
+    const scalar rpm = omega * 60.0 / (2.0 * M_PI);
 
-    if (debug > 1)
-    {
-        Info<< "preciceOmega::value(t=" << t << ") = " << omega << " rad/s" << endl;
-    }
+    Info<< "preciceOmega::value(t=" << t << ")"
+        << " omega=" << omega << " [rad/s]"
+        << " (" << rpm << " [rpm])" << endl;
 
     return omega;
 }
@@ -184,15 +184,14 @@ Foam::scalar Foam::Function1Types::preciceOmega::integrate
     initField();
     
     const scalar omega = omegaField_->value();
+    const scalar rpm = omega * 60.0 / (2.0 * M_PI);
+    const scalar integral = omega * (t2 - t1);
     
-    if (debug)
-    {
-        Info<< "preciceOmega::integrate(" << t1 << ", " << t2 << ")" << nl
-            << "    Using current omega = " << omega << " rad/s" << nl
-            << "    Approximate integral = " << omega * (t2 - t1) << endl;
-    }
+    Info<< "preciceOmega::integrate(t1=" << t1 << ", t2=" << t2 << ")" << nl
+        << "    omega=" << omega << " [rad/s] (" << rpm << " [rpm])" << nl
+        << "    integral=" << integral << " [rad]" << endl;
 
-    return omega * (t2 - t1);
+    return integral;
 }
 
 
