@@ -4,9 +4,9 @@ cd "${0%/*}" || exit
 for d in solidBodyDisplacementLaplacianZone dynamicOversetMotionSolverFvMesh fsiOmega precice-openfoam-adapter
  do
     echo ""
-    echo "=== Building $d ==="
-    (cd "$d" && ./Allwmake "$@") || exit $?
+    echo "=== Cleaning $d ==="
+    (cd "$d" && ./Allclean "$@") || exit $?
  done
 
 echo ""
-echo "All plugins built successfully."
+echo "All plugins cleaned successfully."
