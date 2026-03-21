@@ -1,15 +1,15 @@
 # of-plugins
 
-Standalone OpenFOAM plugin collection for rotating FSI cases.
+Standalone OpenFOAM plugin collection for rotating FSI cases and preCICE coupling.
 
-This repository provides three independent plugins:
+This repository provides four independent plugins:
 
-1. `solidBodyDisplacementLaplacianZone`
-2. `dynamicOversetMotionSolverFvMesh`
-3. `fsiOmega` (with `preciceOmega` Function1)
+1. `solidBodyDisplacementLaplacianZone` — motion solver for zonal rigid body + mesh deformation
+2. `dynamicOversetMotionSolverFvMesh` — overset wrapper for the above
+3. `fsiOmega` — `preciceOmega` Function1 for preCICE angular velocity coupling
+4. `precice-openfoam-adapter` — preCICE OpenFOAM adapter (diverging fork)
 
-No submodules are used. The code is self-contained in this repository and built
-as user libraries with `wmake`.
+No submodules are used. All code is self-contained and built with `wmake`.
 
 ## Contents
 
@@ -24,6 +24,11 @@ as user libraries with `wmake`.
 - `fsiOmega/`
   - `preciceOmega` Function1 that reads angular velocity from a
     `uniformDimensionedScalarField` (typically updated by preCICE adapter).
+- `precice-openfoam-adapter/`
+  - **Diverging fork** of [precice/openfoam-adapter](https://github.com/precice/openfoam-adapter)
+  - Embedded here for simultaneous development and modifications.
+  - See [precice-openfoam-adapter/README.md](precice-openfoam-adapter/README.md) for original documentation.
+  - **Note**: This copy is independent — changes here do **not** automatically sync upstream.
 
 ## Requirements
 
@@ -44,7 +49,7 @@ From repository root:
 ./Allwmake
 ```
 
-This builds:
+This builds the three motion-related libraries:
 
 - `libsolidBodyDisplacementLaplacianZoneFvMotionSolver.so`
 - `libdynamicOversetMotionSolverFvMesh.so`
@@ -52,12 +57,21 @@ This builds:
 
 into `FOAM_USER_LIBBIN`.
 
-You can also build each plugin separately:
+### Building the preCICE adapter (optional)
+
+To build only the preCICE adapter (which has its own build system):
+
+```bash
+cd precice-openfoam-adapter && ./Allwmake
+```
+
+You can also build each component separately:
 
 ```bash
 cd solidBodyDisplacementLaplacianZone && ./Allwmake
 cd ../dynamicOversetMotionSolverFvMesh && ./Allwmake
 cd ../fsiOmega && ./Allwmake
+cd ../precice-openfoam-adapter && ./Allwmake   # requires preCICE dev files
 ```
 
 ## Usage: zonal rigid rotation + mesh deformation (non-overset)
@@ -196,15 +210,21 @@ libs (overset fvMotionSolvers dynamicOversetMotionSolverFvMesh);
 
 **Key point:** This avoids the `solvers { ... }` multi-motion accumulation approach that was problematic before. The overset wrapper allows you to keep **a single motion solver** with simple syntax, even on overset meshes.
 
-## Summary of configuration changes
+## About the preCICE adapter divergence
 
-| Aspect | Non-overset | Overset |
-|--------|-------------|---------|
-| `dynamicFvMesh` | `dynamicMotionSolverFvMesh` | `dynamicOversetMotionSolverFvMesh` |
-| `motionSolver` | `solidBodyDisplacementLaplacianZone` | `solidBodyDisplacementLaplacianZone` (same) |
-| `...Coeffs` | `solidBodyDisplacementLaplacianZoneCoeffs` | `solidBodyDisplacementLaplacianZoneCoeffs` (same) |
-| controlDict libs | `(fvMotionSolvers)` | `(overset fvMotionSolvers dynamicOversetMotionSolverFvMesh)` |
-| preCICE support | Yes, add `libfsiOmega` | Yes, same as non-overset |
+The `precice-openfoam-adapter/` subdirectory is a **complete independent copy** of the 
+[precice/openfoam-adapter](https://github.com/precice/openfoam-adapter) repository
+at a point-in-time snapshot. It is **not** a git submodule.
+
+**Why?** To allow simultaneous, independent development of custom modifications (e.g., enhanced
+FSI control, overset integration, tighter coupling with `preciceOmega`) without depending on
+upstream releases.
+
+**Important:**
+- Changes made here **will diverge** from the upstream precice/openfoam-adapter main branch.
+- To sync back with upstream or integrate upstream changes, you must manually handle merges.
+- For bug fixes or features that should go upstream, consider opening PRs on the
+  [precice/openfoam-adapter](https://github.com/precice/openfoam-adapter) repo directly.
 
 ## Notes
 

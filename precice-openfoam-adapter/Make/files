@@ -1,0 +1,16 @@
+Utilities.C
+
+Interface.C
+
+CouplingDataUser.C
+
+CHT/ModuleCHT.C
+FSI/ModuleFSI.C
+FF/ModuleFF.C
+module-generic/ModuleGeneric.C
+
+Adapter.C
+
+preciceAdapterFunctionObject.C
+
+LIB = $(ADAPTER_TARGET_DIR)/libpreciceAdapterFunctionObject
