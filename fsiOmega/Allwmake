@@ -1,0 +1,5 @@
+#!/bin/sh
+cd "${0%/*}" || exit
+targetType=libso
+. "${WM_PROJECT_DIR:?}"/wmake/scripts/AllwmakeParseArguments
+wmake $targetType

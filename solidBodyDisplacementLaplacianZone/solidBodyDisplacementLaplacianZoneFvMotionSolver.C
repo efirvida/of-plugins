@@ -1,0 +1,517 @@
+/*---------------------------------------------------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | www.openfoam.com
+     \\/     M anipulation  |
+-------------------------------------------------------------------------------
+    Copyright (C) 2026
+-------------------------------------------------------------------------------
+License
+    This file is part of OpenFOAM plugin extensions.
+
+    OpenFOAM is free software: you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    OpenFOAM is distributed in the hope that it will be useful, but WITHOUT
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+    for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with OpenFOAM.  If not, see <http://www.gnu.org/licenses/>.
+
+\*---------------------------------------------------------------------------*/
+
+#include "solidBodyDisplacementLaplacianZoneFvMotionSolver.H"
+
+#include "motionInterpolation.H"
+#include "motionDiffusivity.H"
+#include "fvmLaplacian.H"
+#include "addToRunTimeSelectionTable.H"
+#include "mapPolyMesh.H"
+#include "solidBodyMotionFunction.H"
+#include "transformField.H"
+#include "fvOptions.H"
+#include "cellSet.H"
+#include "syncTools.H"
+#include "DynamicList.H"
+
+namespace Foam
+{
+    defineTypeNameAndDebug(solidBodyDisplacementLaplacianZoneFvMotionSolver, 0);
+
+    addToRunTimeSelectionTable
+    (
+        motionSolver,
+        solidBodyDisplacementLaplacianZoneFvMotionSolver,
+        dictionary
+    );
+
+    addToRunTimeSelectionTable
+    (
+        displacementMotionSolver,
+        solidBodyDisplacementLaplacianZoneFvMotionSolver,
+        displacement
+    );
+}
+
+
+Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::
+solidBodyDisplacementLaplacianZoneFvMotionSolver
+(
+    const polyMesh& mesh,
+    const IOdictionary& dict
+)
+:
+    displacementMotionSolver(mesh, dict, typeName),
+    fvMotionSolver(mesh),
+    SBMFPtr_(solidBodyMotionFunction::New(coeffDict(), mesh.time())),
+    cellDisplacement_
+    (
+        IOobject
+        (
+            "cellDisplacement",
+            mesh.time().timeName(),
+            mesh,
+            IOobject::READ_IF_PRESENT,
+            IOobject::AUTO_WRITE
+        ),
+        fvMesh_,
+        dimensionedVector(pointDisplacement_.dimensions(), Zero),
+        cellMotionBoundaryTypes<vector>(pointDisplacement_.boundaryField())
+    ),
+    pointLocation_(nullptr),
+    interpolationPtr_
+    (
+        coeffDict().found("interpolation")
+      ? motionInterpolation::New(fvMesh_, coeffDict().lookup("interpolation"))
+      : motionInterpolation::New(fvMesh_)
+    ),
+    diffusivityPtr_
+    (
+        motionDiffusivity::New(fvMesh_, coeffDict().lookup("diffusivity"))
+    ),
+    frozenPointsZone_
+    (
+        coeffDict().found("frozenPointsZone")
+      ? fvMesh_.pointZones().findZoneID
+        (
+            coeffDict().get<word>("frozenPointsZone")
+        )
+      : -1
+    ),
+    pointIDs_(),
+    moveAllCells_(false)
+{
+    const word cellZoneName(coeffDict().getOrDefault<word>("cellZone", "none"));
+    const word cellSetName(coeffDict().getOrDefault<word>("cellSet", "none"));
+
+    if ((cellZoneName != "none") && (cellSetName != "none"))
+    {
+        FatalIOErrorInFunction(coeffDict())
+            << "Either cellZone OR cellSet can be supplied, but not both. "
+            << "If neither is supplied, all cells will be included"
+            << exit(FatalIOError);
+    }
+
+    labelList cellIDs;
+
+    if (cellZoneName != "none")
+    {
+        Info<< "Applying solid body motion to cellZone " << cellZoneName
+            << endl;
+
+        const label zoneID = fvMesh_.cellZones().findZoneID(cellZoneName);
+
+        if (zoneID == -1)
+        {
+            FatalErrorInFunction
+                << "Unable to find cellZone " << cellZoneName
+                << ". Valid cellZones are: "
+                << fvMesh_.cellZones().names()
+                << exit(FatalError);
+        }
+
+        cellIDs = fvMesh_.cellZones()[zoneID];
+    }
+
+    if (cellSetName != "none")
+    {
+        Info<< "Applying solid body motion to cellSet " << cellSetName
+            << endl;
+
+        const cellSet set(fvMesh_, cellSetName);
+        cellIDs = set.toc();
+    }
+
+    const label nCells = returnReduce(cellIDs.size(), sumOp<label>());
+    moveAllCells_ = (nCells == 0);
+
+    if (moveAllCells_)
+    {
+        Info<< "Applying rigid transform to entire mesh" << endl;
+    }
+    else
+    {
+        boolList movePts(fvMesh_.nPoints(), false);
+
+        forAll(cellIDs, i)
+        {
+            const label celli = cellIDs[i];
+            const cell& c = fvMesh_.cells()[celli];
+
+            forAll(c, j)
+            {
+                const face& f = fvMesh_.faces()[c[j]];
+                forAll(f, k)
+                {
+                    movePts[f[k]] = true;
+                }
+            }
+        }
+
+        syncTools::syncPointList(fvMesh_, movePts, orEqOp<bool>(), false);
+
+        DynamicList<label> ptIDs(fvMesh_.nPoints());
+        forAll(movePts, pointi)
+        {
+            if (movePts[pointi])
+            {
+                ptIDs.append(pointi);
+            }
+        }
+
+        pointIDs_.transfer(ptIDs);
+
+        Info<< "Applying rigid transform to "
+            << returnReduce(pointIDs_.size(), sumOp<label>())
+            << " points from selected region" << endl;
+    }
+
+    IOobject io
+    (
+        "pointLocation",
+        fvMesh_.time().timeName(),
+        fvMesh_,
+        IOobject::MUST_READ,
+        IOobject::AUTO_WRITE
+    );
+
+    if (debug)
+    {
+        Info<< type() << ":" << nl
+            << "    diffusivity       : " << diffusivityPtr_().type() << nl
+            << "    frozenPoints zone : " << frozenPointsZone_ << endl;
+    }
+
+    if (io.typeHeaderOk<pointVectorField>(true))
+    {
+        pointLocation_.reset
+        (
+            new pointVectorField
+            (
+                io,
+                pointMesh::New(fvMesh_)
+            )
+        );
+
+        if (debug)
+        {
+            Info<< type() << " : Read pointVectorField " << io.name()
+                << " for point boundary conditions. Boundary conditions: "
+                << pointLocation_().boundaryField().types() << endl;
+        }
+    }
+}
+
+
+Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::
+solidBodyDisplacementLaplacianZoneFvMotionSolver
+(
+    const polyMesh& mesh,
+    const IOdictionary& dict,
+    const pointVectorField& pointDisplacement,
+    const pointIOField& points0
+)
+:
+    displacementMotionSolver(mesh, dict, pointDisplacement, points0, typeName),
+    fvMotionSolver(mesh),
+    SBMFPtr_(solidBodyMotionFunction::New(coeffDict(), mesh.time())),
+    cellDisplacement_
+    (
+        IOobject
+        (
+            "cellDisplacement",
+            mesh.time().timeName(),
+            mesh,
+            IOobject::READ_IF_PRESENT,
+            IOobject::AUTO_WRITE
+        ),
+        fvMesh_,
+        dimensionedVector(pointDisplacement_.dimensions(), Zero),
+        cellMotionBoundaryTypes<vector>(pointDisplacement_.boundaryField())
+    ),
+    pointLocation_(nullptr),
+    interpolationPtr_
+    (
+        coeffDict().found("interpolation")
+      ? motionInterpolation::New(fvMesh_, coeffDict().lookup("interpolation"))
+      : motionInterpolation::New(fvMesh_)
+    ),
+    diffusivityPtr_
+    (
+        motionDiffusivity::New(fvMesh_, coeffDict().lookup("diffusivity"))
+    ),
+    frozenPointsZone_
+    (
+        coeffDict().found("frozenPointsZone")
+      ? fvMesh_.pointZones().findZoneID
+        (
+            coeffDict().get<word>("frozenPointsZone")
+        )
+      : -1
+    ),
+    pointIDs_(),
+    moveAllCells_(false)
+{
+    const word cellZoneName(coeffDict().getOrDefault<word>("cellZone", "none"));
+    const word cellSetName(coeffDict().getOrDefault<word>("cellSet", "none"));
+
+    if ((cellZoneName != "none") && (cellSetName != "none"))
+    {
+        FatalIOErrorInFunction(coeffDict())
+            << "Either cellZone OR cellSet can be supplied, but not both. "
+            << "If neither is supplied, all cells will be included"
+            << exit(FatalIOError);
+    }
+
+    labelList cellIDs;
+
+    if (cellZoneName != "none")
+    {
+        const label zoneID = fvMesh_.cellZones().findZoneID(cellZoneName);
+
+        if (zoneID == -1)
+        {
+            FatalErrorInFunction
+                << "Unable to find cellZone " << cellZoneName
+                << ". Valid cellZones are: "
+                << fvMesh_.cellZones().names()
+                << exit(FatalError);
+        }
+
+        cellIDs = fvMesh_.cellZones()[zoneID];
+    }
+
+    if (cellSetName != "none")
+    {
+        const cellSet set(fvMesh_, cellSetName);
+        cellIDs = set.toc();
+    }
+
+    const label nCells = returnReduce(cellIDs.size(), sumOp<label>());
+    moveAllCells_ = (nCells == 0);
+
+    if (!moveAllCells_)
+    {
+        boolList movePts(fvMesh_.nPoints(), false);
+
+        forAll(cellIDs, i)
+        {
+            const label celli = cellIDs[i];
+            const cell& c = fvMesh_.cells()[celli];
+
+            forAll(c, j)
+            {
+                const face& f = fvMesh_.faces()[c[j]];
+                forAll(f, k)
+                {
+                    movePts[f[k]] = true;
+                }
+            }
+        }
+
+        syncTools::syncPointList(fvMesh_, movePts, orEqOp<bool>(), false);
+
+        DynamicList<label> ptIDs(fvMesh_.nPoints());
+        forAll(movePts, pointi)
+        {
+            if (movePts[pointi])
+            {
+                ptIDs.append(pointi);
+            }
+        }
+
+        pointIDs_.transfer(ptIDs);
+    }
+
+    IOobject io
+    (
+        "pointLocation",
+        fvMesh_.time().timeName(),
+        fvMesh_,
+        IOobject::MUST_READ,
+        IOobject::AUTO_WRITE
+    );
+
+    if (io.typeHeaderOk<pointVectorField>(true))
+    {
+        pointLocation_.reset
+        (
+            new pointVectorField
+            (
+                io,
+                pointMesh::New(fvMesh_)
+            )
+        );
+    }
+}
+
+
+Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::
+~solidBodyDisplacementLaplacianZoneFvMotionSolver()
+{}
+
+
+Foam::motionDiffusivity&
+Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::diffusivity()
+{
+    if (!diffusivityPtr_)
+    {
+        diffusivityPtr_ = motionDiffusivity::New
+        (
+            fvMesh_,
+            coeffDict().lookup("diffusivity")
+        );
+    }
+
+    return *diffusivityPtr_;
+}
+
+
+Foam::tmp<Foam::pointField>
+Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
+{
+    interpolationPtr_->interpolate
+    (
+        cellDisplacement_,
+        pointDisplacement_
+    );
+
+    if
+    (
+        pointDisplacement_.boundaryField().size()
+     != cellDisplacement_.boundaryField().size()
+    )
+    {
+        pointDisplacement_.correctBoundaryConditions();
+    }
+
+    tmp<pointField> tnewPoints(new pointField(points0()));
+
+    if (moveAllCells_)
+    {
+        tnewPoints = transformPoints(SBMFPtr_().transformation(), points0());
+    }
+    else
+    {
+        pointField& transformedPts = tnewPoints.ref();
+
+        UIndirectList<point>(transformedPts, pointIDs_) = transformPoints
+        (
+            SBMFPtr_().transformation(),
+            pointField(points0(), pointIDs_)
+        );
+    }
+
+    const pointField& newPoints = tnewPoints();
+
+    if (pointLocation_)
+    {
+        pointLocation_().primitiveFieldRef() =
+            newPoints + pointDisplacement_.internalField();
+
+        pointLocation_().correctBoundaryConditions();
+
+        if (frozenPointsZone_ != -1)
+        {
+            const pointZone& pz = fvMesh_.pointZones()[frozenPointsZone_];
+
+            forAll(pz, i)
+            {
+                pointLocation_()[pz[i]] = newPoints[pz[i]];
+            }
+        }
+
+        twoDCorrectPoints(pointLocation_().primitiveFieldRef());
+
+        return tmp<pointField>(pointLocation_().primitiveField());
+    }
+    else
+    {
+        tmp<pointField> tcurPoints
+        (
+            newPoints + pointDisplacement_.primitiveField()
+        );
+        pointField& curPoints = tcurPoints.ref();
+
+        if (frozenPointsZone_ != -1)
+        {
+            const pointZone& pz = fvMesh_.pointZones()[frozenPointsZone_];
+
+            forAll(pz, i)
+            {
+                curPoints[pz[i]] = newPoints[pz[i]];
+            }
+        }
+
+        twoDCorrectPoints(curPoints);
+
+        return tcurPoints;
+    }
+}
+
+
+void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
+{
+    movePoints(fvMesh_.points());
+
+    diffusivity().correct();
+    pointDisplacement_.boundaryFieldRef().updateCoeffs();
+
+    fv::options& fvOptions(fv::options::New(fvMesh_));
+
+    fvVectorMatrix TEqn
+    (
+        fvm::laplacian
+        (
+            dimensionedScalar("viscosity", dimViscosity, 1.0)
+           *diffusivity().operator()(),
+            cellDisplacement_,
+            "laplacian(diffusivity,cellDisplacement)"
+        )
+     ==
+        fvOptions(cellDisplacement_)
+    );
+
+    fvOptions.constrain(TEqn);
+    TEqn.solveSegregatedOrCoupled();
+    fvOptions.correct(cellDisplacement_);
+}
+
+
+void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::updateMesh
+(
+    const mapPolyMesh& mpm
+)
+{
+    displacementMotionSolver::updateMesh(mpm);
+
+    diffusivityPtr_.clear();
+}
+
+
+// ************************************************************************* //

@@ -1,0 +1,12 @@
+#!/bin/sh
+cd "${0%/*}" || exit
+
+for d in solidBodyDisplacementLaplacianZone fsiOmega
+ do
+    echo ""
+    echo "=== Building $d ==="
+    (cd "$d" && ./Allwmake "$@") || exit $?
+ done
+
+echo ""
+echo "All plugins built successfully."
