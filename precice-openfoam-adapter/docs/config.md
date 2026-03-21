@@ -70,10 +70,13 @@ participating in the coupled simulation. These need to be defined in the files
 included in the `0/` directory. The names of the interfaces (e.g., `Interface1`) are arbitrary and are not used.
 
 The `locations` field is optional and its default value is `faceCenters` (with `faceCentres` also accepted), signifying that the interface mesh is defined on the cell face centers. An alternative option is `faceNodes`, which defines the mesh on the face nodes and is needed, e.g., for reading displacements in an FSI scenario.
-The final type is `volumeCenters` (alternatively `volumeCentres`), which allows the user to couple over a volume using the cell centers of the domain. The user can also specify patches, which will be coupled additionally to the cells using the `faceCenters` mesh.
+Another type is `volumeCenters` (alternatively `volumeCentres`), which allows the user to couple over a volume using the cell centers of the domain. The user can also specify patches, which will be coupled additionally to the cells using the `faceCenters` mesh.
+This fork also supports `globalData`, which creates a pseudo-mesh with one vertex at `(0 0 0)` and is intended for exchanging global scalar or vector quantities following the documented preCICE workaround.
 The `volumeCenters` location is currently implemented for fluid-fluid coupling (`Pressure` and `Velocity`) and conjugate heat transfer (`Temperature`).
 
 The `cellSets` field can be used to specify one or multiple coupling regions (defined by OpenFOAM `cellSets`) for volume coupling. The field can only be used with the `volumeCenters` location and it is optional. If no `cellSets` are specified, the full domain will be coupled.
+
+For `globalData`, do not specify `patches`, `cellSets`, or `connectivity`.
 
 The values for `readData` and `writeData`
 for conjugate heat transfer
@@ -141,6 +144,52 @@ You will run into problems when you use `Displacement(Delta)` as write data set 
 The `writeData` and `readData` names are case-insensitive since v1.4.0. This means that both `TEMPERATURE` and `Temperature` are valid, for example.
 Additionally, since earlier versions, only the beginning of the name needs to match: `Temperatures0` is valid and matched to the temperature reader/writer, for example.
 {% endtip %}
+
+## Global data with a pseudo-mesh
+
+preCICE currently documents global data exchange through a one-vertex pseudo-mesh instead of a dedicated global-data API. This fork adds an adapter-side shortcut for that pattern via `locations globalData;`.
+
+Use the `generic` module with the new dictionary schema so the adapter knows the OpenFOAM registry name of the global field:
+
+```c++
+modules (FSI generic);
+
+interfaces
+{
+  InterfaceGlobal
+  {
+    mesh        Global-Mesh;
+    locations   globalData;
+
+    readData
+    (
+      AngularVelocity
+      {
+        name        AngularVelocity;
+        solver_name omega;
+        dimensions  [0 0 -1 0 0 0 0];
+      }
+    );
+
+    writeData
+    (
+      LinearAcceleration
+      {
+        name        LinearAcceleration;
+        solver_name g;
+        dimensions  [0 1 -2 0 0 0 0];
+      }
+    );
+  };
+};
+```
+
+Notes:
+
+- Global scalar data is stored in a `uniformDimensionedScalarField` in the `Time` registry.
+- Global vector data is stored in a `uniformDimensionedVectorField` in the `Time` registry.
+- If the field does not exist yet, the adapter creates it. Supplying `dimensions` avoids falling back to a dimensionless placeholder.
+- In parallel, only the master rank owns the pseudo-mesh vertex in preCICE. The adapter broadcasts reads to all ranks and verifies that writes are consistent across ranks before sending.
 
 ## Configuration of the OpenFOAM case
 
