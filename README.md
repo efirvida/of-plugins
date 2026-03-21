@@ -60,7 +60,9 @@ cd ../dynamicOversetMotionSolverFvMesh && ./Allwmake
 cd ../fsiOmega && ./Allwmake
 ```
 
-## Usage: zonal rigid rotation + mesh deformation
+## Usage: zonal rigid rotation + mesh deformation (non-overset)
+
+Use this configuration for **standard (single-mesh, no overset)** cases.
 
 Example `constant/dynamicMeshDict`:
 
@@ -94,9 +96,19 @@ solidBodyDisplacementLaplacianZoneCoeffs
 }
 ```
 
-## Usage with preCICE angular velocity (FSI)
+In `system/controlDict` add standard motion solver libraries:
 
-Load both libraries:
+```c++
+libs (fvMotionSolvers);
+```
+
+## Usage with preCICE angular velocity (FSI coupling)
+
+The `preciceOmega` Function1 works with **both** non-overset and overset configurations.
+
+### With non-overset meshes:
+
+Load both libraries in `motionSolverLibs`:
 
 ```c++
 motionSolverLibs
@@ -118,65 +130,89 @@ preciceOmegaCoeffs
 }
 ```
 
+### With overset meshes:
+
+Same as above, but in a `dynamicOversetMotionSolverFvMesh` configuration.
+In `controlDict` add:
+
+```c++
+libs (overset fvMotionSolvers dynamicOversetMotionSolverFvMesh);
+```
+
 Ensure your adapter configuration uses the same field name
-(e.g. `nameOmegaField omega`).
+(e.g. `nameOmegaField omega` in your `preciceDict`).
 
-## Usage on overset meshes
+## Usage on overset meshes (different configuration)
 
-The important change for overset is the mesh class, not the motion-solver
-syntax. In `constant/dynamicMeshDict` use:
+Use this configuration for **overset (multi-mesh)** cases. The key differences are:
+
+1. **dynamicFvMesh type** changes to `dynamicOversetMotionSolverFvMesh`
+2. **controlDict** must load the overset wrapper library
+3. **Otherwise**, the motion solver syntax remains identical
+
+Example `constant/dynamicMeshDict`:
 
 ```c++
 dynamicFvMesh   dynamicOversetMotionSolverFvMesh;
 
 motionSolverLibs
 (
-  "libsolidBodyDisplacementLaplacianZoneFvMotionSolver.so"
-  "libfvMotionSolvers.so"
-  "libfsiOmega.so"
+    "libsolidBodyDisplacementLaplacianZoneFvMotionSolver.so"
+    "libfvMotionSolvers.so"
+    "libfsiOmega.so"
 );
 
 motionSolver    solidBodyDisplacementLaplacianZone;
 
 solidBodyDisplacementLaplacianZoneCoeffs
 {
-  cellZone    bladeZone;
+    cellZone    bladeZone;
 
-  solidBodyMotionFunction rotatingMotion;
+    solidBodyMotionFunction rotatingMotion;
 
-  rotatingMotionCoeffs
-  {
-    origin  (0 0 0);
-    axis    (0 1 0);
-    omega   158;
+    rotatingMotionCoeffs
+    {
+        origin  (0 0 0);
+        axis    (0 1 0);
+        omega   158;
 
-    // Or with FSI:
-    // omega   preciceOmega;
-    // preciceOmegaCoeffs
-    // {
-    //     fieldName omega;
-    // }
-  }
+        // Or with FSI:
+        // omega   preciceOmega;
+        // preciceOmegaCoeffs
+        // {
+        //     fieldName omega;
+        // }
+    }
 
-  diffusivity inverseDistance (propellerTip);
+    diffusivity inverseDistance (propellerTip);
 }
 ```
 
-And in `system/controlDict` load the overset wrapper library in addition to the
-standard overset support, for example:
+In `system/controlDict`, **must** load the overset wrapper library:
 
 ```c++
 libs (overset fvMotionSolvers dynamicOversetMotionSolverFvMesh);
 ```
 
-This avoids the `solvers { ... }` multi-motion setup and keeps the same single
-solver syntax as the non-overset plugin.
+**Key point:** This avoids the `solvers { ... }` multi-motion accumulation approach that was problematic before. The overset wrapper allows you to keep **a single motion solver** with simple syntax, even on overset meshes.
+
+## Summary of configuration changes
+
+| Aspect | Non-overset | Overset |
+|--------|-------------|---------|
+| `dynamicFvMesh` | `dynamicMotionSolverFvMesh` | `dynamicOversetMotionSolverFvMesh` |
+| `motionSolver` | `solidBodyDisplacementLaplacianZone` | `solidBodyDisplacementLaplacianZone` (same) |
+| `...Coeffs` | `solidBodyDisplacementLaplacianZoneCoeffs` | `solidBodyDisplacementLaplacianZoneCoeffs` (same) |
+| controlDict libs | `(fvMotionSolvers)` | `(overset fvMotionSolvers dynamicOversetMotionSolverFvMesh)` |
+| preCICE support | Yes, add `libfsiOmega` | Yes, same as non-overset |
 
 ## Notes
 
 - If neither `cellZone` nor `cellSet` is provided, rigid transform is applied
-  to the full mesh.
-- This repository intentionally contains only these plugins and no dependency
+  to the full mesh (both non-overset and overset).
+- The overset wrapper eliminates the need for `solvers { ... }` dictionaries
+  and the problematic multi-solver accumulation approach.
+- This repository intentionally contains only these plugins and has no dependency
   on git submodules.
 
 ## License
