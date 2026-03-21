@@ -1,7 +1,7 @@
 #!/bin/sh
 cd "${0%/*}" || exit
 
-for d in solidBodyDisplacementLaplacianZone fsiOmega
+for d in solidBodyDisplacementLaplacianZone dynamicOversetMotionSolverFvMesh fsiOmega
  do
     echo ""
     echo "=== Building $d ==="
