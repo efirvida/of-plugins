@@ -541,7 +541,7 @@ std::size_t preciceAdapter::Generic::GlobalVectorFieldCoupler::write(double* buf
 {
     bindField();
 
-    const vector value = vectorField_->value();
+    const Foam::vector value = vectorField_->value();
     buffer[0] = value.x();
     buffer[1] = value.y();
 
@@ -557,7 +557,7 @@ void preciceAdapter::Generic::GlobalVectorFieldCoupler::read(double* buffer, con
 {
     bindField();
 
-    vector value = vectorField_->value();
+    Foam::vector value = vectorField_->value();
     value.x() = buffer[0];
     value.y() = buffer[1];
     value.z() = (dim == 3) ? buffer[2] : 0.0;
