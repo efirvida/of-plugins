@@ -484,6 +484,13 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     fv::options& fvOptions(fv::options::New(fvMesh_));
 
+    // Ensure cyclicAMI boundary conditions are evaluated before building
+    // the laplacian matrix. Without this, the non-orthogonal correction
+    // (fvc::grad inside fvm::laplacian with "limited corrected" scheme)
+    // triggers AMI interpolation with stale boundary data, causing an
+    // MPI deadlock in parallel runs with distributed cyclicAMI patches.
+    cellDisplacement_.correctBoundaryConditions();
+
     fvVectorMatrix TEqn
     (
         fvm::laplacian
