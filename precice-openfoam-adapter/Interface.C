@@ -6,6 +6,8 @@
 #include "faceTriangulation.H"
 #include "cellSet.H"
 #include "Pstream.H"
+#include "IPstream.H"
+#include "OPstream.H"
 
 #include <algorithm>
 
@@ -113,8 +115,35 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
     // -- Step 1: exchange per-rank vertex counts --------------------------------
     rankDataCount_.setSize(Pstream::nProcs(), label(0));
     rankDataCount_[Pstream::myProcNo()] = label(numDataLocations_);
-    Pstream::gatherList(rankDataCount_);
-    Pstream::scatterList(rankDataCount_);
+    // Replace deprecated gatherList+scatterList (broken in v2506) with
+    // explicit point-to-point: ranks send counts to master, master broadcasts back.
+    if (!Pstream::master())
+    {
+        OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+        toMaster << rankDataCount_[Pstream::myProcNo()];
+    }
+    else
+    {
+        for (int p = 1; p < Pstream::nProcs(); ++p)
+        {
+            IPstream fromProc(Pstream::commsTypes::scheduled, p);
+            fromProc >> rankDataCount_[p];
+        }
+    }
+    // Broadcast the full count list from master to all ranks
+    if (Pstream::master())
+    {
+        for (int p = 1; p < Pstream::nProcs(); ++p)
+        {
+            OPstream toProc(Pstream::commsTypes::scheduled, p);
+            toProc << rankDataCount_;
+        }
+    }
+    else
+    {
+        IPstream fromMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+        fromMaster >> rankDataCount_;
+    }
 
     // -- Step 2: prefix-sum offsets (identical on all ranks) -------------------
     rankDataOffset_.setSize(Pstream::nProcs() + 1, label(0));
@@ -131,7 +160,20 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
             localList[k] = localVertices[k];
         allVerts[Pstream::myProcNo()] = std::move(localList);
     }
-    Pstream::gatherList(allVerts);
+    // Replace deprecated gatherList with explicit point-to-point gather
+    if (!Pstream::master())
+    {
+        OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+        toMaster << allVerts[Pstream::myProcNo()];
+    }
+    else
+    {
+        for (int p = 1; p < Pstream::nProcs(); ++p)
+        {
+            IPstream fromProc(Pstream::commsTypes::scheduled, p);
+            fromProc >> allVerts[p];
+        }
+    }
 
     // -- Step 4: rank 0 registers all vertices with preCICE --------------------
     if (Pstream::master())
@@ -165,7 +207,21 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
                 allIDs[p][i] = allVertexIDs_[rankDataOffset_[p] + i];
         }
     }
-    Pstream::scatterList(allIDs);
+    // Replace deprecated scatterList (broken in v2506) with explicit
+    // point-to-point scatter: master sends each rank's vertex IDs.
+    if (Pstream::master())
+    {
+        for (int p = 1; p < Pstream::nProcs(); ++p)
+        {
+            OPstream toProc(Pstream::commsTypes::scheduled, p);
+            toProc << allIDs[p];
+        }
+    }
+    else
+    {
+        IPstream fromMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+        fromMaster >> allIDs[Pstream::myProcNo()];
+    }
 
     const List<int>& myIDs = allIDs[Pstream::myProcNo()];
     vertexIDs_.assign(myIDs.begin(), myIDs.end());
@@ -407,7 +463,20 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                         localList[k] = localAllTriVertIDs[k];
                     allTriIDs[Pstream::myProcNo()] = std::move(localList);
                 }
-                Pstream::gatherList(allTriIDs);
+                // Replace deprecated gatherList with explicit point-to-point gather
+                if (!Pstream::master())
+                {
+                    OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+                    toMaster << allTriIDs[Pstream::myProcNo()];
+                }
+                else
+                {
+                    for (int p = 1; p < Pstream::nProcs(); ++p)
+                    {
+                        IPstream fromProc(Pstream::commsTypes::scheduled, p);
+                        fromProc >> allTriIDs[p];
+                    }
+                }
                 if (Pstream::master())
                 {
                     std::vector<int> globalTriIDs;
@@ -627,7 +696,21 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
                         allBufs[p][k] = globalData[start + k];
                 }
             }
-            Pstream::scatterList(allBufs);
+            // Replace deprecated scatterList (broken in v2506) with explicit
+            // point-to-point scatter: master sends each rank's data slice.
+            if (Pstream::master())
+            {
+                for (int p = 1; p < Pstream::nProcs(); ++p)
+                {
+                    OPstream toProc(Pstream::commsTypes::scheduled, p);
+                    toProc << allBufs[p];
+                }
+            }
+            else
+            {
+                IPstream fromMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+                fromMaster >> allBufs[Pstream::myProcNo()];
+            }
 
             // Copy scattered slice into this rank's dataBuffer_
             const List<double>& myBuf = allBufs[Pstream::myProcNo()];
@@ -717,7 +800,20 @@ void preciceAdapter::Interface::writeCouplingData()
                     localList[k] = dataBuffer_[k];
                 allBufs[Pstream::myProcNo()] = std::move(localList);
             }
-            Pstream::gatherList(allBufs);
+            // Replace deprecated gatherList with explicit point-to-point gather
+            if (!Pstream::master())
+            {
+                OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
+                toMaster << allBufs[Pstream::myProcNo()];
+            }
+            else
+            {
+                for (int p = 1; p < Pstream::nProcs(); ++p)
+                {
+                    IPstream fromProc(Pstream::commsTypes::scheduled, p);
+                    fromProc >> allBufs[p];
+                }
+            }
 
             if (Pstream::master())
             {
