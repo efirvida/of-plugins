@@ -47,11 +47,23 @@ protected:
     //- Names of the OpenFOAM cell sets to be coupled (for volume coupling)
     std::vector<std::string> cellSetNames_;
 
-    //- Number of data points (cell centers) on the interface
+    //- Number of data points (cell centers) on the interface (local to this rank)
     int numDataLocations_ = 0;
 
-    //- Vertex IDs assigned by preCICE
+    //- Vertex IDs assigned by preCICE (local slice, scatter-received from rank 0)
     std::vector<int> vertexIDs_;
+
+    //- Per-rank vertex count (all ranks, size = nProcs). Valid after configureMesh.
+    Foam::labelList rankDataCount_;
+
+    //- Prefix-sum offsets into the global vertex array (size = nProcs+1, all ranks).
+    Foam::labelList rankDataOffset_;
+
+    //- Total vertex count across all ranks. Valid after configureMesh.
+    Foam::label globalNumDataLocations_ = 0;
+
+    //- All preCICE vertex IDs for this mesh (rank 0 only, size = globalNumDataLocations_).
+    std::vector<int> allVertexIDs_;
 
     //- Buffer for the coupling data
     std::vector<double> dataBuffer_;
@@ -71,8 +83,13 @@ protected:
     // Simulation dimension
     unsigned int dim_;
 
+    //- Gather local mesh vertices to rank 0, call setMeshVertices there, then
+    //  scatter the preCICE vertex IDs back to each rank's vertexIDs_.
+    //  In sequential runs calls setMeshVertices directly.
+    void gatherRegisterScatterIDs(const std::vector<double>& localVertices);
+
     //- Extracts the locations of the face centers or face nodes
-    //  and exposes them to preCICE with setMeshVertices
+    //  and exposes them to preCICE via gatherRegisterScatterIDs.
     void configureMesh(const Foam::fvMesh& mesh,
                        const std::string& namePointDisplacement,
                        const std::string& nameCellDisplacement);

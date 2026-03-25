@@ -29,6 +29,9 @@ License
 #include "fvMesh.H"
 #include "addToRunTimeSelectionTable.H"
 
+// For ::sleep()
+#include <unistd.h>
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -84,6 +87,30 @@ bool Foam::functionObjects::preciceAdapterFunctionObject::read(const dictionary&
     clockValue clock;
     clock.update();
 #endif
+
+    if (!initialized_)
+    {
+        initDelay_ = dict.lookupOrDefault<label>("initDelay", 0);
+
+        if (initDelay_ > 0)
+        {
+            // Use an MPI collective as a barrier so all ranks sleep together,
+            // then proceed together, avoiding secondary-connection race conditions
+            // when a partner participant (e.g. a single-rank FEM solver) has a
+            // long pre-preCICE setup phase.
+            reduce(initDelay_, maxOp<label>());
+
+            adapterInfo(
+                "initDelay: sleeping " + std::to_string(initDelay_)
+                    + " s on all ranks before preCICE initialization "
+                      "(set initDelay 0; in preciceDict to disable).",
+                "info");
+
+            ::sleep(static_cast<unsigned int>(initDelay_));
+        }
+
+        initialized_ = true;
+    }
 
     adapter_.configure();
 

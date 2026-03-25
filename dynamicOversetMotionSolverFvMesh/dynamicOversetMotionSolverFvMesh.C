@@ -30,25 +30,18 @@ License
 
 namespace Foam
 {
-    defineTypeNameAndDebug(dynamicOversetMotionSolverFvMesh, 0);
+    defineTypeNameAndDebug(dynamicOversetZoneDisplacementFvMesh, 0);
 
     addToRunTimeSelectionTable
     (
         dynamicFvMesh,
-        dynamicOversetMotionSolverFvMesh,
+        dynamicOversetZoneDisplacementFvMesh,
         IOobject
-    );
-
-    addToRunTimeSelectionTable
-    (
-        dynamicFvMesh,
-        dynamicOversetMotionSolverFvMesh,
-        doInit
     );
 }
 
 
-Foam::dynamicOversetMotionSolverFvMesh::dynamicOversetMotionSolverFvMesh
+Foam::dynamicOversetZoneDisplacementFvMesh::dynamicOversetZoneDisplacementFvMesh
 (
     const IOobject& io,
     const bool doInit
@@ -59,24 +52,29 @@ Foam::dynamicOversetMotionSolverFvMesh::dynamicOversetMotionSolverFvMesh
 {}
 
 
-Foam::dynamicOversetMotionSolverFvMesh::~dynamicOversetMotionSolverFvMesh()
-{}
+Foam::dynamicOversetZoneDisplacementFvMesh::~dynamicOversetZoneDisplacementFvMesh()
+{
+    // Release overset-owned addressing/interface caches before fvMesh teardown.
+    oversetFvMeshBase::clearOut();
+}
 
 
-bool Foam::dynamicOversetMotionSolverFvMesh::update()
+bool Foam::dynamicOversetZoneDisplacementFvMesh::update()
 {
     if (!dynamicMotionSolverFvMesh::update())
     {
         return false;
     }
 
+    // Keep same ordering used by upstream dynamicOversetFvMesh:
+    // first move mesh, then refresh overset addressing/stencil state.
     oversetFvMeshBase::update();
 
     return true;
 }
 
 
-bool Foam::dynamicOversetMotionSolverFvMesh::writeObject
+bool Foam::dynamicOversetZoneDisplacementFvMesh::writeObject
 (
     IOstreamOption streamOpt,
     const bool writeOnProc

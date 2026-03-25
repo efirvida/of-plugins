@@ -88,12 +88,124 @@ preciceAdapter::Interface::Interface(
     configureMesh(mesh, namePointDisplacement, nameCellDisplacement);
 }
 
+// ---------------------------------------------------------------------------
+// Gather-scatter helper: each rank contributes its local vertex coordinates;
+// rank 0 registers the full global set with preCICE and receives all global
+// vertex IDs; the appropriate per-rank slice of IDs is scattered back to
+// vertexIDs_ on every rank.
+// In sequential (non-MPI) runs the function degenerates to a direct call.
+// ---------------------------------------------------------------------------
+void preciceAdapter::Interface::gatherRegisterScatterIDs(
+    const std::vector<double>& localVertices)
+{
+    if (!Pstream::parRun())
+    {
+        vertexIDs_.resize(numDataLocations_);
+        precice_.setMeshVertices(meshName_, localVertices, vertexIDs_);
+        globalNumDataLocations_ = numDataLocations_;
+        rankDataCount_.setSize(1, label(0));
+        rankDataCount_[0] = label(numDataLocations_);
+        rankDataOffset_.setSize(2, label(0));
+        rankDataOffset_[1] = label(numDataLocations_);
+        return;
+    }
+
+    // -- Step 1: exchange per-rank vertex counts --------------------------------
+    rankDataCount_.setSize(Pstream::nProcs(), label(0));
+    rankDataCount_[Pstream::myProcNo()] = label(numDataLocations_);
+    Pstream::gatherList(rankDataCount_);
+    Pstream::scatterList(rankDataCount_);
+
+    // -- Step 2: prefix-sum offsets (identical on all ranks) -------------------
+    rankDataOffset_.setSize(Pstream::nProcs() + 1, label(0));
+    for (int p = 0; p < Pstream::nProcs(); ++p)
+        rankDataOffset_[p + 1] = rankDataOffset_[p] + rankDataCount_[p];
+    globalNumDataLocations_ = rankDataOffset_[Pstream::nProcs()];
+
+    // -- Step 3: gather local coordinates to rank 0 ----------------------------
+    List<List<double>> allVerts(Pstream::nProcs());
+    {
+        const label _nVerts = static_cast<label>(localVertices.size());
+        List<double> localList(_nVerts);
+        for (label k = 0; k < _nVerts; ++k)
+            localList[k] = localVertices[k];
+        allVerts[Pstream::myProcNo()] = std::move(localList);
+    }
+    Pstream::gatherList(allVerts);
+
+    // -- Step 4: rank 0 registers all vertices with preCICE --------------------
+    if (Pstream::master())
+    {
+        std::vector<double> globalVerts;
+        globalVerts.reserve(
+            static_cast<std::size_t>(dim_) *
+            static_cast<std::size_t>(globalNumDataLocations_));
+        for (int p = 0; p < Pstream::nProcs(); ++p)
+            for (double d : allVerts[p])
+                globalVerts.push_back(d);
+
+        allVertexIDs_.resize(static_cast<std::size_t>(globalNumDataLocations_));
+        precice_.setMeshVertices(meshName_, globalVerts, allVertexIDs_);
+
+        DEBUG(adapterInfo(
+            "Mesh \"" + meshName_ + "\": registered " +
+            std::to_string(globalNumDataLocations_) +
+            " vertices on rank 0 (gather-scatter mode).",
+            "info"));
+    }
+
+    // -- Step 5: scatter preCICE vertex IDs back to each rank -----------------
+    List<List<int>> allIDs(Pstream::nProcs());
+    if (Pstream::master())
+    {
+        for (int p = 0; p < Pstream::nProcs(); ++p)
+        {
+            allIDs[p].setSize(rankDataCount_[p]);
+            for (label i = 0; i < rankDataCount_[p]; ++i)
+                allIDs[p][i] = allVertexIDs_[rankDataOffset_[p] + i];
+        }
+    }
+    Pstream::scatterList(allIDs);
+
+    const List<int>& myIDs = allIDs[Pstream::myProcNo()];
+    vertexIDs_.assign(myIDs.begin(), myIDs.end());
+}
+
+// ---------------------------------------------------------------------------
 void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::string& namePointDisplacement, const std::string& nameCellDisplacement)
 {
+    // Diagnostic lambda: log per-rank and global vertex counts; warn on sparse
+    // interfaces (some ranks have 0 vertices while others do not).
+    const auto reportVertexDistribution = [this](const std::string& locationLabel)
+    {
+        if (!Pstream::parRun())
+            return;
+
+        label localCount = numDataLocations_;
+        label minCount   = localCount;
+        label maxCount   = localCount;
+        reduce(minCount, minOp<label>());
+        reduce(maxCount, maxOp<label>());
+
+        DEBUG(adapterInfo(
+            "Mesh \"" + meshName_ + "\" (" + locationLabel + ") local vertices=" +
+            std::to_string(localCount) +
+            ", global min=" + std::to_string(minCount) +
+            ", global max=" + std::to_string(maxCount),
+            "info"));
+
+        if (minCount == 0 && maxCount > 0)
+        {
+            DEBUG(adapterInfo(
+                "Sparse coupling interface on mesh \"" + meshName_ +
+                "\": some MPI ranks have no local interface entities. "
+                "Handled via gather-scatter registration.",
+                "warning"));
+        }
+    };
+
     // The way we configure the mesh differs between meshes based on face centers
     // and meshes based on face nodes.
-    // TODO: Reduce code duplication. In the meantime, take care to update
-    // all the branches.
 
     if (locationType_ == LocationType::faceCenters)
     {
@@ -104,6 +216,7 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                 mesh.boundaryMesh()[patchIDs_.at(j)].faceCentres().size();
         }
         DEBUG(adapterInfo("Number of face centres: " + std::to_string(numDataLocations_)));
+        reportVertexDistribution("faceCenters");
 
         // In case we want to perform the reset later on, look-up the corresponding data field name
         Foam::volVectorField const* cellDisplacement = nullptr;
@@ -143,30 +256,21 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                     vertices[verticesIndex++] = faceCenters[i][d];
 
             // Check if we are in the right layer in case of preCICE dimension 2
-            // If there is at least one node with a different z-coordinate, then the (2D) geometry is not on the xy-plane, as required.
             if (dim_ == 2)
             {
                 const pointField faceNodes =
                     mesh.boundaryMesh()[patchIDs_.at(j)].localPoints();
                 const auto faceNodesSize = faceNodes.size();
-                //Allocate memory for z-coordinates
                 std::array<double, 2> z_location({0, 0});
                 constexpr unsigned int z_axis = 2;
 
-                // Find out about the existing planes
-                // Store z-coordinate of the first layer
                 if (faceNodesSize > 0)
-                {
                     z_location[0] = faceNodes[0][z_axis];
-                }
-                // Go through the remaining points until we find the second z-coordinate
-                // and store it (there are only two allowed in case we are in the xy-layer)
+
                 for (int i = 0; i < faceNodesSize; i++)
                 {
                     if (z_location[0] == faceNodes[i][z_axis])
-                    {
                         continue;
-                    }
                     else
                     {
                         z_location[1] = faceNodes[i][z_axis];
@@ -174,13 +278,10 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                     }
                 }
 
-                // Check if the z-coordinates of all nodes match the z-coordinates we have collected above
                 for (int i = 0; i < faceNodesSize; i++)
                 {
                     if (z_location[0] == faceNodes[i][z_axis] || z_location[1] == faceNodes[i][z_axis])
-                    {
                         continue;
-                    }
                     else
                     {
                         adapterInfo("It seems like you are using preCICE in 2D and your geometry is not located int the xy-plane. "
@@ -193,8 +294,9 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
             }
         }
 
-        // Pass the mesh vertices information to preCICE
-        precice_.setMeshVertices(meshName_, vertices, vertexIDs_);
+        // Gather all local vertices to rank 0, register with preCICE there,
+        // then scatter the assigned IDs back to each rank's vertexIDs_.
+        gatherRegisterScatterIDs(vertices);
     }
     else if (locationType_ == LocationType::faceNodes)
     {
@@ -205,6 +307,7 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                 mesh.boundaryMesh()[patchIDs_.at(j)].localPoints().size();
         }
         DEBUG(adapterInfo("Number of face nodes: " + std::to_string(numDataLocations_)));
+        reportVertexDistribution("faceNodes");
 
         // In case we want to perform the reset later on, look-up the corresponding data field name
         Foam::pointVectorField const* pointDisplacement = nullptr;
@@ -213,36 +316,19 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                 &mesh.lookupObject<pointVectorField>(namePointDisplacement);
 
         // Array of the mesh vertices.
-        // One mesh is used for all the patches and each vertex has 3D coordinates.
         std::vector<double> vertices(dim_ * numDataLocations_);
-
-        // Array of the indices of the mesh vertices.
-        // Each vertex has one index, but three coordinates.
         vertexIDs_.resize(numDataLocations_);
-
-        // Initialize the index of the vertices array
         int verticesIndex = 0;
 
         // Map between OpenFOAM vertices and preCICE vertex IDs
         std::map<std::tuple<double, double, double>, int> verticesMap;
 
-        // Get the locations of the mesh vertices (here: face nodes)
-        // for all the patches
+        // Get the locations of the mesh vertices (here: face nodes) for all the patches
         for (uint j = 0; j < patchIDs_.size(); j++)
         {
-            // Get the face nodes of the current patch
-            // TODO: Check if this is correct.
-            // TODO: Check if this behaves correctly in parallel.
-            // TODO: Check if this behaves correctly with multiple, connected patches.
-            // TODO: Maybe this should be a pointVectorField?
             pointField faceNodes =
                 mesh.boundaryMesh()[patchIDs_.at(j)].localPoints();
 
-            // Similar to the cell displacement above:
-            // Move the interface according to the current values of the cellDisplacement field,
-            // to account for any displacements accumulated before restarting the simulation.
-            // This is information that OpenFOAM reads from its result/restart files.
-            // If the simulation is not restarted, the displacement should be zero and this line should have no effect.
             if (pointDisplacement != nullptr && !restartFromDeformed_)
             {
                 const vectorField& resetField = refCast<const vectorField>(
@@ -250,51 +336,37 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                 faceNodes -= resetField;
             }
 
-            // Assign the (x,y,z) locations to the vertices
-            // TODO: Ensure consistent order when writing/reading
             for (int i = 0; i < faceNodes.size(); i++)
-            {
                 for (unsigned int d = 0; d < dim_; ++d)
-                {
                     vertices[verticesIndex++] = faceNodes[i][d];
-                }
-            }
         }
 
-        // Pass the mesh vertices information to preCICE
-        precice_.setMeshVertices(meshName_, vertices, vertexIDs_);
+        // Gather all local vertices to rank 0, register with preCICE there,
+        // then scatter the globally-assigned IDs back to each rank's vertexIDs_.
+        gatherRegisterScatterIDs(vertices);
 
         if (meshConnectivity_)
         {
+            // Rebuild verticesMap using the globally-assigned preCICE vertex IDs
+            // (scattered back to this rank by gatherRegisterScatterIDs).
             for (std::size_t i = 0; i < vertexIDs_.size(); ++i)
             {
-                verticesMap.emplace(std::make_tuple(vertices[3 * i], vertices[3 * i + 1], vertices[3 * i + 2]), vertexIDs_[i]);
+                verticesMap.emplace(
+                    std::make_tuple(vertices[3 * i], vertices[3 * i + 1], vertices[3 * i + 2]),
+                    vertexIDs_[i]);
             }
 
+            // Accumulate triangle connectivity across all patches, then
+            // gather to rank 0 and register with one preCICE call.
+            std::vector<int> localAllTriVertIDs;
             for (uint j = 0; j < patchIDs_.size(); j++)
             {
-                // Define triangles
-                // This is done in the following way:
-                // We get a list of faces, which belong to this patch, and triangulate each face
-                // using the faceTriangulation object.
-                // Afterwards, we store the coordinates of the triangulated faces in order to use
-                // the preCICE function "getMeshVertexIDsFromPositions". This function returns
-                // for each point the respective preCICE related ID.
-                // These IDs are consequently used for the preCICE function "setMeshTriangleWithEdges",
-                // which defines edges and triangles on the interface. This connectivity information
-                // allows preCICE to provide a nearest-projection mapping.
-                // Since data is now related to nodes, volume fields (e.g. heat flux) needs to be
-                // interpolated in the data classes (e.g. CHT)
-
-                // Define constants
                 const int triaPerQuad = 2;
                 const int nodesPerTria = 3;
 
-                // Get the list of faces and coordinates at the interface patch
                 const List<face> faceField = mesh.boundaryMesh()[patchIDs_.at(j)].localFaces();
-                Field<point> pointCoords = mesh.boundaryMesh()[patchIDs_.at(j)].localPoints();
+                Field<point> pointCoords   = mesh.boundaryMesh()[patchIDs_.at(j)].localPoints();
 
-                // Subtract the displacement part in case we have deformation
                 if (pointDisplacement != nullptr && !restartFromDeformed_)
                 {
                     const vectorField& resetField = refCast<const vectorField>(
@@ -302,34 +374,54 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                     pointCoords -= resetField;
                 }
 
-                //Array to store the IDs we get from preCICE
                 std::vector<int> triVertIDs;
                 triVertIDs.reserve(faceField.size() * triaPerQuad * nodesPerTria);
 
-                // Triangulate all faces and collect set of nodes that form triangles,
-                // which are used to set mesh triangles in preCICE.
                 forAll(faceField, facei)
                 {
                     const face& faceQuad = faceField[facei];
-
-                    // Triangulate the face
                     faceTriangulation faceTri(pointCoords, faceQuad, false);
 
-                    // Iterate over all triangles generated out of each (quad) face
                     for (uint triIndex = 0; triIndex < triaPerQuad; triIndex++)
-                    {
-                        // Get the vertex that corresponds to the x,y,z coordinates of each node of a triangle
                         for (uint nodeIndex = 0; nodeIndex < nodesPerTria; nodeIndex++)
-                        {
-                            triVertIDs.push_back(verticesMap.at(std::make_tuple(pointCoords[faceTri[triIndex][nodeIndex]][0], pointCoords[faceTri[triIndex][nodeIndex]][1], pointCoords[faceTri[triIndex][nodeIndex]][2])));
-                        }
-                    }
+                            triVertIDs.push_back(verticesMap.at(std::make_tuple(
+                                pointCoords[faceTri[triIndex][nodeIndex]][0],
+                                pointCoords[faceTri[triIndex][nodeIndex]][1],
+                                pointCoords[faceTri[triIndex][nodeIndex]][2])));
                 }
 
                 DEBUG(adapterInfo("Number of triangles: " + std::to_string(faceField.size() * triaPerQuad)));
 
-                //Set Triangles
-                precice_.setMeshTriangles(meshName_, triVertIDs);
+                localAllTriVertIDs.insert(localAllTriVertIDs.end(),
+                    triVertIDs.begin(), triVertIDs.end());
+            }
+
+            // Register mesh triangles: gather all to rank 0, then one setMeshTriangles call.
+            if (Pstream::parRun())
+            {
+                List<List<int>> allTriIDs(Pstream::nProcs());
+                {
+                    const label _nTri = static_cast<label>(localAllTriVertIDs.size());
+                    List<int> localList(_nTri);
+                    for (label k = 0; k < _nTri; ++k)
+                        localList[k] = localAllTriVertIDs[k];
+                    allTriIDs[Pstream::myProcNo()] = std::move(localList);
+                }
+                Pstream::gatherList(allTriIDs);
+                if (Pstream::master())
+                {
+                    std::vector<int> globalTriIDs;
+                    for (int p = 0; p < Pstream::nProcs(); ++p)
+                        for (int id : allTriIDs[p])
+                            globalTriIDs.push_back(id);
+                    if (!globalTriIDs.empty())
+                        precice_.setMeshTriangles(meshName_, globalTriIDs);
+                }
+            }
+            else
+            {
+                if (!localAllTriVertIDs.empty())
+                    precice_.setMeshTriangles(meshName_, localAllTriVertIDs);
             }
         }
     }
@@ -338,18 +430,13 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
         // The volume coupling implementation considers the mesh points in the volume and
         // on the boundary patches in order to take the boundary conditions into account
 
-        // Get the cell labels of the overlapping region
         std::vector<labelList> overlapCells;
 
         if (!cellSetNames_.empty())
         {
-            // For every cellSet that participates in the coupling
             for (uint j = 0; j < cellSetNames_.size(); j++)
             {
-                // Create a cell set
                 cellSet overlapRegion(mesh, cellSetNames_[j]);
-
-                // Add the cells IDs to the vector and count how many overlap cells the interface has
                 overlapCells.push_back(overlapRegion.toc());
                 numDataLocations_ += overlapCells[j].size();
             }
@@ -359,83 +446,60 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
             numDataLocations_ = mesh.C().size();
         }
 
-        // Count the data locations for all the patches
-        // and add those to the previously determined number of mesh points in the volume
         for (uint j = 0; j < patchIDs_.size(); j++)
         {
             numDataLocations_ +=
                 mesh.boundaryMesh()[patchIDs_.at(j)].faceCentres().size();
         }
         DEBUG(adapterInfo("Number of coupling volumes: " + std::to_string(numDataLocations_)));
+        reportVertexDistribution("volumeCenters");
 
-        // Array of the mesh vertices.
-        // One mesh is used for all the patches and each vertex has 3D coordinates.
         std::vector<double> vertices(dim_ * numDataLocations_);
-
-        // Array of the indices of the mesh vertices.
-        // Each vertex has one index, but three coordinates.
         vertexIDs_.resize(numDataLocations_);
-
-        // Initialize the index of the vertices array
         int verticesIndex = 0;
 
         if (!cellSetNames_.empty())
         {
-            // for all the overlapping cells (cellSets)
             for (uint j = 0; j < cellSetNames_.size(); j++)
             {
-                // Get the cell centres of the current cellSet.
                 const labelList& cells = overlapCells.at(j);
-
-                // Get the coordinates of the cells of the current cellSet.
                 for (int i = 0; i < cells.size(); i++)
                 {
                     vertices[verticesIndex++] = mesh.C().internalField()[cells[i]].x();
                     vertices[verticesIndex++] = mesh.C().internalField()[cells[i]].y();
                     if (dim_ == 3)
-                    {
                         vertices[verticesIndex++] = mesh.C().internalField()[cells[i]].z();
-                    }
                 }
             }
         }
         else
         {
             const vectorField& CellCenters = mesh.C();
-
             for (int i = 0; i < CellCenters.size(); i++)
             {
                 vertices[verticesIndex++] = CellCenters[i].x();
                 vertices[verticesIndex++] = CellCenters[i].y();
                 if (dim_ == 3)
-                {
                     vertices[verticesIndex++] = CellCenters[i].z();
-                }
             }
         }
 
-        // Get the locations of the mesh vertices (here: face centers)
-        // for all the patches
         for (uint j = 0; j < patchIDs_.size(); j++)
         {
-            // Get the face centers of the current patch
             const vectorField faceCenters =
                 mesh.boundaryMesh()[patchIDs_.at(j)].faceCentres();
-
-            // Assign the (x,y,z) locations to the vertices
             for (int i = 0; i < faceCenters.size(); i++)
             {
                 vertices[verticesIndex++] = faceCenters[i].x();
                 vertices[verticesIndex++] = faceCenters[i].y();
                 if (dim_ == 3)
-                {
                     vertices[verticesIndex++] = faceCenters[i].z();
-                }
             }
         }
 
-        // Pass the mesh vertices information to preCICE
-        precice_.setMeshVertices(meshName_, vertices, vertexIDs_);
+        // Gather all local vertices to rank 0, register with preCICE there,
+        // then scatter the assigned IDs back to each rank's vertexIDs_.
+        gatherRegisterScatterIDs(vertices);
     }
     else if (locationType_ == LocationType::globalData)
     {
@@ -456,28 +520,13 @@ void preciceAdapter::Interface::addCouplingDataWriter(
     const FieldConfig& fieldConfig,
     CouplingDataUser* couplingDataWriter)
 {
-    // Set the data name (from preCICE)
     couplingDataWriter->setDataName(fieldConfig.name);
-
-    // Set the flip normal option
     couplingDataWriter->setFlipNormal(fieldConfig.flip_normal);
-
-    // Set the patchIDs of the patches that form the interface
     couplingDataWriter->setPatchIDs(patchIDs_);
-
-    // Set the names of the cell sets to be coupled (for volume coupling)
     couplingDataWriter->setCellSetNames(cellSetNames_);
-
-    // Set the location type in the CouplingDataUser class
     couplingDataWriter->setLocationsType(locationType_);
-
-    // Set the location type in the CouplingDataUser class
     couplingDataWriter->checkDataLocation(meshConnectivity_);
-
-    // Initilaize class specific data
     couplingDataWriter->initialize();
-
-    // Add the CouplingDataUser to the list of writers
     couplingDataWriters_.push_back(couplingDataWriter);
 }
 
@@ -486,200 +535,227 @@ void preciceAdapter::Interface::addCouplingDataReader(
     const FieldConfig& fieldConfig,
     preciceAdapter::CouplingDataUser* couplingDataReader)
 {
-    // Set the patchIDs of the patches that form the interface
     couplingDataReader->setDataName(fieldConfig.name);
-
-    // Set the flip normal option
     couplingDataReader->setFlipNormal(fieldConfig.flip_normal);
-
-    // Add the CouplingDataUser to the list of readers
     couplingDataReader->setPatchIDs(patchIDs_);
-
-    // Set the location type in the CouplingDataUser class
     couplingDataReader->setLocationsType(locationType_);
-
-    // Set the names of the cell sets to be coupled (for volume coupling)
     couplingDataReader->setCellSetNames(cellSetNames_);
-
-    // Check, if the current location type is supported by the data type
     couplingDataReader->checkDataLocation(meshConnectivity_);
-
-    // Initilaize class specific data
     couplingDataReader->initialize();
-
-    // Add the CouplingDataUser to the list of readers
     couplingDataReaders_.push_back(couplingDataReader);
 }
 
 void preciceAdapter::Interface::createBuffer()
 {
-    // Will the interface buffer need to store 3D vector data?
     bool needsVectorData = false;
     int dataBufferSize = 0;
 
-    // Check all the coupling data readers
     for (uint i = 0; i < couplingDataReaders_.size(); i++)
-    {
         if (couplingDataReaders_.at(i)->hasVectorData())
-        {
             needsVectorData = true;
-        }
-    }
 
-    // Check all the coupling data writers
     for (uint i = 0; i < couplingDataWriters_.size(); i++)
-    {
         if (couplingDataWriters_.at(i)->hasVectorData())
-        {
             needsVectorData = true;
-        }
-    }
 
-    // Set the appropriate buffer size
-    if (needsVectorData)
-    {
-        dataBufferSize = dim_ * numDataLocations_;
-    }
-    else
-    {
-        dataBufferSize = numDataLocations_;
-    }
+    dataBufferSize = needsVectorData ? dim_ * numDataLocations_ : numDataLocations_;
 
-    // Create the data buffer
-    // An interface has only one data buffer, which is shared between several
-    // CouplingDataUsers.
+    // An interface has only one data buffer, shared between several CouplingDataUsers.
     dataBuffer_.resize(dataBufferSize);
 }
 
+// ---------------------------------------------------------------------------
+// readCouplingData
+// For parallel non-global data: rank 0 reads the full global dataset from
+// preCICE using allVertexIDs_, then scatters per-rank slices to every rank.
+// For globalData: unchanged master-read + broadcast semantics.
+// For sequential: unchanged direct read.
+// ---------------------------------------------------------------------------
 void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
 {
-    // Make every coupling data reader read
     for (uint i = 0; i < couplingDataReaders_.size(); i++)
     {
-        // Pointer to the current reader
-        preciceAdapter::CouplingDataUser*
-            couplingDataReader = couplingDataReaders_.at(i);
+        preciceAdapter::CouplingDataUser* couplingDataReader = couplingDataReaders_.at(i);
+        const int dataDim =
+            static_cast<int>(precice_.getDataDimensions(meshName_, couplingDataReader->dataName()));
 
-        // Make preCICE read vector or scalar data
-        // and fill the adapter's buffer
-        std::size_t nReadData = vertexIDs_.size() * precice_.getDataDimensions(meshName_, couplingDataReader->dataName());
-        // We could add a sanity check here
-        // nReadData == vertexIDs_.size() * (1 + (dim_ - 1) * static_cast<int>(couplingDataReader->hasVectorData()));
-
-        precice::span<double> dataSpanRead {dataBuffer_.data(), nReadData};
-
-        if (locationType_ != LocationType::globalData || Pstream::master())
-        {
-            precice_.readData(
-                meshName_,
-                couplingDataReader->dataName(),
-                vertexIDs_,
-                relativeReadTime,
-                dataSpanRead);
-        }
-
-        if (locationType_ == LocationType::globalData && Pstream::parRun())
-        {
-            const std::size_t nBroadcast =
-                static_cast<std::size_t>(precice_.getDataDimensions(meshName_, couplingDataReader->dataName()));
-
-            for (std::size_t valueI = 0; valueI < nBroadcast; ++valueI)
-            {
-                Pstream::broadcast(dataBuffer_[valueI]);
-            }
-        }
-
-        // Apply flip normal if required
         if (locationType_ == LocationType::globalData)
         {
-            precice::span<double> globalDataSpan
+            // Global data: master reads, broadcasts to all ranks
+            const std::size_t nGlobal = static_cast<std::size_t>(dataDim);
+            precice::span<double> dataSpan {dataBuffer_.data(), nGlobal};
+            if (Pstream::master())
             {
-                dataBuffer_.data(),
-                static_cast<std::size_t>(precice_.getDataDimensions(meshName_, couplingDataReader->dataName()))
-            };
-            couplingDataReader->applyFlipNormal(globalDataSpan);
+                precice_.readData(meshName_, couplingDataReader->dataName(),
+                    vertexIDs_, relativeReadTime, dataSpan);
+            }
+            if (Pstream::parRun())
+            {
+                for (std::size_t k = 0; k < nGlobal; ++k)
+                    Pstream::broadcast(dataBuffer_[k]);
+            }
+            couplingDataReader->applyFlipNormal(dataSpan);
+            couplingDataReader->read(dataBuffer_.data(), dim_);
+        }
+        else if (Pstream::parRun())
+        {
+            // Parallel non-global: rank 0 reads all, scatter to each rank
+            const std::size_t nLocalRead =
+                static_cast<std::size_t>(numDataLocations_) *
+                static_cast<std::size_t>(dataDim);
+
+            List<List<double>> allBufs(Pstream::nProcs());
+            if (Pstream::master())
+            {
+                std::vector<double> globalData(
+                    static_cast<std::size_t>(globalNumDataLocations_) *
+                    static_cast<std::size_t>(dataDim));
+                precice_.readData(
+                    meshName_,
+                    couplingDataReader->dataName(),
+                    allVertexIDs_,
+                    relativeReadTime,
+                    {globalData.data(), globalData.size()});
+
+                // Split into per-rank slices
+                for (int p = 0; p < Pstream::nProcs(); ++p)
+                {
+                    const label start = static_cast<label>(dataDim) * rankDataOffset_[p];
+                    const label sz    = static_cast<label>(dataDim) * rankDataCount_[p];
+                    allBufs[p].setSize(sz);
+                    for (label k = 0; k < sz; ++k)
+                        allBufs[p][k] = globalData[start + k];
+                }
+            }
+            Pstream::scatterList(allBufs);
+
+            // Copy scattered slice into this rank's dataBuffer_
+            const List<double>& myBuf = allBufs[Pstream::myProcNo()];
+            std::copy(myBuf.begin(), myBuf.end(), dataBuffer_.begin());
+
+            precice::span<double> localSpan {dataBuffer_.data(), nLocalRead};
+            couplingDataReader->applyFlipNormal(localSpan);
+            couplingDataReader->read(dataBuffer_.data(), dim_);
         }
         else
         {
-            couplingDataReader->applyFlipNormal(dataSpanRead);
+            // Sequential run: direct read
+            const std::size_t nRead =
+                vertexIDs_.size() * static_cast<std::size_t>(dataDim);
+            precice::span<double> dataSpan {dataBuffer_.data(), nRead};
+            precice_.readData(meshName_, couplingDataReader->dataName(),
+                vertexIDs_, relativeReadTime, dataSpan);
+            couplingDataReader->applyFlipNormal(dataSpan);
+            couplingDataReader->read(dataBuffer_.data(), dim_);
         }
-
-        // Read the received data from the buffer
-        couplingDataReader->read(dataBuffer_.data(), dim_);
     }
 }
 
+// ---------------------------------------------------------------------------
+// writeCouplingData
+// For parallel non-global data: each rank fills its local dataBuffer_ via
+// write(), then all buffers are gathered to rank 0 which writes the assembled
+// global dataset to preCICE via allVertexIDs_.
+// For globalData: unchanged broadcast + consistency-check + master-write.
+// For sequential: unchanged direct write.
+// ---------------------------------------------------------------------------
 void preciceAdapter::Interface::writeCouplingData()
 {
-    // Make every coupling data writer write
     for (uint i = 0; i < couplingDataWriters_.size(); i++)
     {
-        // Pointer to the current reader
-        preciceAdapter::CouplingDataUser*
-            couplingDataWriter = couplingDataWriters_.at(i);
+        preciceAdapter::CouplingDataUser* couplingDataWriter = couplingDataWriters_.at(i);
+        const int dataDim =
+            static_cast<int>(precice_.getDataDimensions(meshName_, couplingDataWriter->dataName()));
 
-        // Write the data into the adapter's buffer
+        // Populate the local data buffer from OpenFOAM fields
         auto nWrittenData = couplingDataWriter->write(dataBuffer_.data(), meshConnectivity_, dim_);
 
-        if (locationType_ == LocationType::globalData && Pstream::parRun())
+        if (locationType_ == LocationType::globalData)
         {
-            std::vector<double> localBuffer(dataBuffer_.begin(), dataBuffer_.begin() + nWrittenData);
-
-            for (std::size_t valueI = 0; valueI < nWrittenData; ++valueI)
+            // Global data: check consistency, master writes
+            if (Pstream::parRun())
             {
-                Pstream::broadcast(dataBuffer_[valueI]);
+                std::vector<double> localBuffer(
+                    dataBuffer_.begin(), dataBuffer_.begin() + nWrittenData);
+                for (std::size_t k = 0; k < nWrittenData; ++k)
+                    Pstream::broadcast(dataBuffer_[k]);
+                scalar maxDiff = 0.0;
+                for (std::size_t k = 0; k < nWrittenData; ++k)
+                    maxDiff = max(maxDiff, mag(localBuffer[k] - dataBuffer_[k]));
+                reduce(maxDiff, maxOp<scalar>());
+                if (maxDiff > SMALL)
+                {
+                    adapterInfo(
+                        "Global data \"" + couplingDataWriter->dataName() +
+                        "\" differs across MPI ranks. Use a single shared value on all ranks "
+                        "before writing to preCICE.",
+                        "error");
+                }
             }
+            const std::size_t nWrite =
+                vertexIDs_.size() * static_cast<std::size_t>(dataDim);
+            precice::span<double> dataSpan {dataBuffer_.data(), nWrite};
+            couplingDataWriter->applyFlipNormal(dataSpan);
+            if (Pstream::master())
+                precice_.writeData(meshName_, couplingDataWriter->dataName(),
+                    vertexIDs_, dataSpan);
+        }
+        else if (Pstream::parRun())
+        {
+            // Parallel non-global: apply flip normal, gather, rank 0 writes all
+            const std::size_t nLocalWrite =
+                static_cast<std::size_t>(numDataLocations_) *
+                static_cast<std::size_t>(dataDim);
+            precice::span<double> localSpan {dataBuffer_.data(), nLocalWrite};
+            couplingDataWriter->applyFlipNormal(localSpan);
 
-            scalar maxDifference = 0.0;
-            for (std::size_t valueI = 0; valueI < nWrittenData; ++valueI)
+            List<List<double>> allBufs(Pstream::nProcs());
             {
-                maxDifference = max(maxDifference, mag(localBuffer[valueI] - dataBuffer_[valueI]));
+                const label _nCopy = static_cast<label>(nLocalWrite);
+                List<double> localList(_nCopy);
+                for (label k = 0; k < _nCopy; ++k)
+                    localList[k] = dataBuffer_[k];
+                allBufs[Pstream::myProcNo()] = std::move(localList);
             }
-            reduce(maxDifference, maxOp<scalar>());
+            Pstream::gatherList(allBufs);
 
-            if (maxDifference > SMALL)
+            if (Pstream::master())
             {
-                adapterInfo(
-                    "Global data \"" + couplingDataWriter->dataName()
-                        + "\" differs across MPI ranks. Use a single shared value on all ranks before writing to preCICE.",
-                    "error");
+                std::vector<double> globalData;
+                globalData.reserve(
+                    static_cast<std::size_t>(globalNumDataLocations_) *
+                    static_cast<std::size_t>(dataDim));
+                for (int p = 0; p < Pstream::nProcs(); ++p)
+                    for (double v : allBufs[p])
+                        globalData.push_back(v);
+                precice_.writeData(
+                    meshName_,
+                    couplingDataWriter->dataName(),
+                    allVertexIDs_,
+                    {globalData.data(), globalData.size()});
             }
         }
-
-        const std::size_t nPreciceWriteData =
-            vertexIDs_.size() * precice_.getDataDimensions(meshName_, couplingDataWriter->dataName());
-
-        precice::span<double> dataSpanWritten {dataBuffer_.data(), nPreciceWriteData};
-
-        // Apply flip normal if required
-        couplingDataWriter->applyFlipNormal(dataSpanWritten);
-
-        // Make preCICE write vector or scalar data
-        if (locationType_ != LocationType::globalData || Pstream::master())
+        else
         {
-            precice_.writeData(
-                meshName_,
-                couplingDataWriter->dataName(),
-                vertexIDs_,
-                dataSpanWritten);
+            // Sequential run: direct write
+            const std::size_t nWrite =
+                vertexIDs_.size() * static_cast<std::size_t>(dataDim);
+            precice::span<double> dataSpan {dataBuffer_.data(), nWrite};
+            couplingDataWriter->applyFlipNormal(dataSpan);
+            precice_.writeData(meshName_, couplingDataWriter->dataName(),
+                vertexIDs_, dataSpan);
         }
     }
 }
 
 preciceAdapter::Interface::~Interface()
 {
-    // Delete all the coupling data readers
     for (uint i = 0; i < couplingDataReaders_.size(); i++)
-    {
         delete couplingDataReaders_.at(i);
-    }
     couplingDataReaders_.clear();
 
-    // Delete all the coupling data writers
     for (uint i = 0; i < couplingDataWriters_.size(); i++)
-    {
         delete couplingDataWriters_.at(i);
-    }
     couplingDataWriters_.clear();
 }
 

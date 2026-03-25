@@ -90,6 +90,15 @@ class preciceAdapterFunctionObject
     //- Adapter's main class instance
     preciceAdapter::Adapter adapter_;
 
+    //- Seconds to sleep before calling adapter_.configure(), to allow
+    //  partner participants with long pre-preCICE setup phases (e.g., FEM
+    //  mesh loading, matrix assembly) to reach the preCICE initialize()
+    //  barrier before this participant does.  Default 0 (disabled).
+    label initDelay_ = 0;
+
+    //- True after the first adapter_.configure() has been called.
+    bool initialized_ = false;
+
     // Private Member Functions
 
     //- No copy construct

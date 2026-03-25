@@ -24,21 +24,23 @@ License
     along with OpenFOAM.  If not, see <http://www.gnu.org/licenses/>.
 
 Class
-    Foam::dynamicOversetMotionSolverFvMesh
+    Foam::dynamicOversetZoneDisplacementFvMesh
 
 Description
     Overset-enabled dynamicFvMesh wrapper for a single motion solver.
 
-    This class mirrors the simple configuration style of
-    dynamicMotionSolverFvMesh while adding overset support through
-    oversetFvMeshBase. It is intended to be used with a single motion solver
-    such as solidBodyDisplacementLaplacianZone, avoiding the more brittle
-    multi-solver accumulation approach based on a solvers{} list.
+    This class follows the overset integration pattern from OpenFOAM's native
+    dynamicOversetFvMesh, but uses dynamicMotionSolverFvMesh (single motion
+    solver) instead of dynamicMotionSolverListFvMesh (multibody list).
+
+    The goal is to keep robust overset lifecycle/update/write behavior while
+    preserving the single-solver workflow used in FSI cases with rotating-zone
+    motion plus displacement-based mesh deformation.
 
     Typical usage:
 
     \verbatim
-    dynamicFvMesh   dynamicOversetMotionSolverFvMesh;
+    dynamicFvMesh   dynamicOversetZoneDisplacementFvMesh;
 
     motionSolverLibs
     (
@@ -71,6 +73,7 @@ SourceFiles
 #ifndef dynamicOversetMotionSolverFvMesh_H
 #define dynamicOversetMotionSolverFvMesh_H
 
+#include "motionSolver.H"
 #include "dynamicMotionSolverFvMesh.H"
 #include "oversetFvMeshBase.H"
 #include "cellCellStencilObject.H"
@@ -80,34 +83,34 @@ SourceFiles
 namespace Foam
 {
 
-class dynamicOversetMotionSolverFvMesh
+class dynamicOversetZoneDisplacementFvMesh
 :
     public dynamicMotionSolverFvMesh,
     public oversetFvMeshBase
 {
     // Private Member Functions
 
-        dynamicOversetMotionSolverFvMesh
+        dynamicOversetZoneDisplacementFvMesh
         (
-            const dynamicOversetMotionSolverFvMesh&
+            const dynamicOversetZoneDisplacementFvMesh&
         ) = delete;
 
-        void operator=(const dynamicOversetMotionSolverFvMesh&) = delete;
+        void operator=(const dynamicOversetZoneDisplacementFvMesh&) = delete;
 
 
 public:
 
-    TypeName("dynamicOversetMotionSolverFvMesh");
+    TypeName("dynamicOversetZoneDisplacementFvMesh");
 
 
-    dynamicOversetMotionSolverFvMesh
+    dynamicOversetZoneDisplacementFvMesh
     (
         const IOobject& io,
         const bool doInit=true
     );
 
 
-    virtual ~dynamicOversetMotionSolverFvMesh();
+    virtual ~dynamicOversetZoneDisplacementFvMesh();
 
 
     virtual const lduAddressing& lduAddr() const
