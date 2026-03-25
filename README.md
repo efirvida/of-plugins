@@ -28,12 +28,13 @@ No submodules are used. All code is self-contained and built with `wmake`.
   - **Diverging fork** of [precice/openfoam-adapter](https://github.com/precice/openfoam-adapter)
   - **FSI-only version**: CHT (heat transfer) and FF (free-surface) modules removed.
   - Embedded here for simultaneous development with custom FSI modifications.
+  - Includes **v2506 fix**: deprecated `Pstream::scatterList`/`gatherList` replaced with `OPstream`/`IPstream`.
   - See [precice-openfoam-adapter/README.md](precice-openfoam-adapter/README.md) for original documentation.
   - **Note**: This copy is independent — changes here do **not** automatically sync upstream.
 
 ## Requirements
 
-- OpenFOAM (tested with OpenFOAM.com line, v2406+ recommended)
+- OpenFOAM (tested with OpenFOAM.com line, v2406–v2506)
 - Standard OpenFOAM build environment loaded:
   - `WM_PROJECT_DIR`
   - `FOAM_USER_LIBBIN`
