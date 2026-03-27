@@ -69,10 +69,7 @@ bool Foam::dynamicOversetZoneDisplacementFvMesh::init(const bool doInit)
 
 
 Foam::dynamicOversetZoneDisplacementFvMesh::~dynamicOversetZoneDisplacementFvMesh()
-{
-    // Release overset-owned addressing/interface caches before fvMesh teardown.
-    oversetFvMeshBase::clearOut();
-}
+{}
 
 
 bool Foam::dynamicOversetZoneDisplacementFvMesh::update()

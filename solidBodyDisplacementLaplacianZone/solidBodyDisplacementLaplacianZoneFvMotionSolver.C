@@ -482,12 +482,34 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     fv::options& fvOptions(fv::options::New(fvMesh_));
 
-    // Ensure cyclicAMI boundary conditions are evaluated before building
-    // the laplacian matrix. Without this, the non-orthogonal correction
-    // (fvc::grad inside fvm::laplacian with "limited corrected" scheme)
-    // triggers AMI interpolation with stale boundary data, causing an
-    // MPI deadlock in parallel runs with distributed cyclicAMI patches.
-    cellDisplacement_.correctBoundaryConditions();
+    // Update boundary coefficients before building the laplacian matrix.
+    // We use the same pattern as the standard displacementLaplacianFvMotionSolver.
+    // On overset meshes, calling correctBoundaryConditions() would trigger
+    // oversetFvPatchField::initEvaluate() which performs field interpolation
+    // via mapDistribute, introducing unwanted MPI communication that can
+    // corrupt heap metadata (detected as "corrupted double-linked list"
+    // during the next inverseDistance::update() call).
+    // On cyclicAMI meshes (without overset), correctBoundaryConditions()
+    // is needed to prevent MPI deadlock from stale AMI data during the
+    // non-orthogonal correction (fvc::grad inside fvm::laplacian).
+    bool hasOversetPatch = false;
+    forAll(cellDisplacement_.boundaryField(), patchi)
+    {
+        if (cellDisplacement_.boundaryField()[patchi].type() == "overset")
+        {
+            hasOversetPatch = true;
+            break;
+        }
+    }
+
+    if (hasOversetPatch)
+    {
+        cellDisplacement_.boundaryFieldRef().updateCoeffs();
+    }
+    else
+    {
+        cellDisplacement_.correctBoundaryConditions();
+    }
 
     fvVectorMatrix TEqn
     (
