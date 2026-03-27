@@ -87,3 +87,41 @@ always occurs on the same MPI rank for a given mesh decomposition.
    first call to `diffusivity()` (lazy init already supported by the
    accessor). This avoids triggering `wallDist` → overset stencil
    construction during the motion solver constructor.
+
+---
+
+#### 4. Prevent heap corruption on overset meshes during motion solve
+
+**Files:**
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+- `dynamicOversetMotionSolverFvMesh/dynamicOversetMotionSolverFvMesh.C`
+
+**Problem:** After the SIGSEGV init fix (Bug 3), the overset simulation
+started successfully but crashed on the 3rd time step with **"corrupted
+double-linked list"** (glibc abort) inside `inverseDistance::update()`
+during `fvMesh::movePoints()`.
+
+Root cause: the motion solver's `solve()` method called
+`cellDisplacement_.correctBoundaryConditions()`, which triggers
+`oversetFvPatchField::initEvaluate()`. When `active_` is false (normal
+operation), the overset patch performs field interpolation via the
+stencil's `mapDistribute::distribute()`. This introduces MPI
+communication through UCX that corrupts glibc heap metadata. The
+corruption is detected later when `inverseDistance::update()` allocates
+or frees memory.
+
+The standard `displacementLaplacianFvMotionSolver` uses
+`cellDisplacement_.boundaryFieldRef().updateCoeffs()` instead, which
+does not trigger overset field interpolation.
+
+**Fix:**
+1. **Runtime overset detection in `solve()`:** Check at runtime whether
+   the `cellDisplacement` field has `overset` patches. If so, use
+   `updateCoeffs()` (matching the standard solver). Otherwise, use
+   `correctBoundaryConditions()` (preserving the cyclicAMI deadlock
+   fix from Bug 2).
+2. **Remove redundant destructor call:** Removed the
+   `oversetFvMeshBase::clearOut()` call from
+   `dynamicOversetZoneDisplacementFvMesh`'s destructor (upstream
+   `dynamicOversetFvMesh` uses an empty destructor; `lduPtr_` is
+   automatically cleaned up by autoPtr).
