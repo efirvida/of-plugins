@@ -64,6 +64,22 @@ Foam::dynamicOversetZoneDisplacementFvMesh::dynamicOversetZoneDisplacementFvMesh
 
 bool Foam::dynamicOversetZoneDisplacementFvMesh::init(const bool doInit)
 {
+    // Force initial stencil computation.  The oversetFvMeshBase constructor
+    // creates the cellCellStencilObject with update=false, leaving the
+    // stencil empty (null cellInterpolationMap, empty cellTypes, etc.).
+    // In the upstream dynamicOversetFvMesh the stencil is computed earlier
+    // (during eagerly-created motion solvers) so oversetFvMeshBase finds
+    // an already-updated stencil in the MeshObject cache.  Our deferred
+    // init means oversetFvMeshBase creates the empty stencil first.
+    // Without this update, any subsequent field evaluation (e.g. turbulence
+    // model construction evaluating k/epsilon with overset BCs) triggers
+    // oversetFvPatchField::initEvaluate() which accesses the null
+    // cellInterpolationMap, corrupting the heap.
+    const_cast<cellCellStencilObject&>
+    (
+        Stencil::New(*this)
+    ).movePoints();
+
     return dynamicMotionSolverFvMesh::init(doInit);
 }
 
