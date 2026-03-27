@@ -113,6 +113,10 @@ public:
     virtual ~dynamicOversetZoneDisplacementFvMesh();
 
 
+    //- Deferred initialisation (called after full construction)
+    virtual bool init(const bool doInit);
+
+
     virtual const lduAddressing& lduAddr() const
     {
         return oversetFvMeshBase::lduAddr();

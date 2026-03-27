@@ -90,10 +90,11 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
       ? motionInterpolation::New(fvMesh_, coeffDict().lookup("interpolation"))
       : motionInterpolation::New(fvMesh_)
     ),
-    diffusivityPtr_
-    (
-        motionDiffusivity::New(fvMesh_, coeffDict().lookup("diffusivity"))
-    ),
+    // Defer diffusivity creation to the first call to diffusivity().
+    // Eager construction triggers wallDist → boundary evaluation which
+    // can crash on overset meshes (oversetFvPatchField::initEvaluate
+    // builds the cellCellStencil before the mesh object is fully set up).
+    diffusivityPtr_(nullptr),
     frozenPointsZone_
     (
         coeffDict().found("frozenPointsZone")
@@ -261,10 +262,7 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
       ? motionInterpolation::New(fvMesh_, coeffDict().lookup("interpolation"))
       : motionInterpolation::New(fvMesh_)
     ),
-    diffusivityPtr_
-    (
-        motionDiffusivity::New(fvMesh_, coeffDict().lookup("diffusivity"))
-    ),
+    diffusivityPtr_(nullptr),
     frozenPointsZone_
     (
         coeffDict().found("frozenPointsZone")

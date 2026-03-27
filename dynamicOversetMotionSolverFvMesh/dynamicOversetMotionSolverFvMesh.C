@@ -47,9 +47,25 @@ Foam::dynamicOversetZoneDisplacementFvMesh::dynamicOversetZoneDisplacementFvMesh
     const bool doInit
 )
 :
-    dynamicMotionSolverFvMesh(io, doInit),
+    // Defer init: the motion solver created during init() may trigger
+    // overset stencil construction (via inverseDistanceDiffusivity →
+    // wallDist → oversetFvPatchField::initEvaluate).  The stencil
+    // requires the full dynamicOversetZoneDisplacementFvMesh vtable
+    // and oversetFvMeshBase to be constructed first.
+    dynamicMotionSolverFvMesh(io, false),
     oversetFvMeshBase(static_cast<const fvMesh&>(*this))
-{}
+{
+    if (doInit)
+    {
+        init(true);
+    }
+}
+
+
+bool Foam::dynamicOversetZoneDisplacementFvMesh::init(const bool doInit)
+{
+    return dynamicMotionSolverFvMesh::init(doInit);
+}
 
 
 Foam::dynamicOversetZoneDisplacementFvMesh::~dynamicOversetZoneDisplacementFvMesh()
