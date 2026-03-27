@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — 2025-03-25
+## [Unreleased] — 2025-03-27
 
 ### Bug Fixes (OpenFOAM v2506 compatibility)
 
@@ -54,3 +54,36 @@ the first mesh motion has occurred.
 before `fvm::laplacian()` in `solve()`. This ensures all boundary
 conditions (including cyclicAMI) are evaluated synchronously across all
 ranks before the matrix assembly begins.
+
+---
+
+#### 3. Prevent SIGSEGV on overset meshes during motion solver init
+
+**Files:**
+- `dynamicOversetMotionSolverFvMesh/dynamicOversetMotionSolverFvMesh.C`
+- `dynamicOversetMotionSolverFvMesh/dynamicOversetMotionSolverFvMesh.H`
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+
+**Problem:** When `solidBodyDisplacementLaplacianZone` is used with the
+overset mesh wrapper `dynamicOversetZoneDisplacementFvMesh`, the motion
+solver's `inverseDistanceDiffusivity` constructor eagerly computes
+`wallDist`. The wall-distance boundary evaluation triggers
+`oversetFvPatchField::initEvaluate()`, which constructs the
+`cellCellStencil` (via `cellCellStencilObject::New()`). This happens
+during the `dynamicMotionSolverFvMesh` base-class constructor — before
+`oversetFvMeshBase` is constructed and before the derived-class vtable
+is in place — causing a **SIGSEGV** inside `inverseDistance::update()`
+(`ListPolicy::deallocate<Map<long>>`). The crash is consistent and
+always occurs on the same MPI rank for a given mesh decomposition.
+
+**Fix (two parts):**
+1. **Deferred init in `dynamicOversetZoneDisplacementFvMesh`:** Pass
+   `doInit=false` to `dynamicMotionSolverFvMesh` and call `init()`
+   after `oversetFvMeshBase` is constructed, ensuring the full vtable
+   (`lduAddr`, `interfaces`, overset `solve`/`interpolate` overrides)
+   is available when the motion solver triggers overset operations.
+2. **Lazy diffusivity in `solidBodyDisplacementLaplacianZone`:** Defer
+   `motionDiffusivity` creation from the member-initializer list to the
+   first call to `diffusivity()` (lazy init already supported by the
+   accessor). This avoids triggering `wallDist` → overset stencil
+   construction during the motion solver constructor.
