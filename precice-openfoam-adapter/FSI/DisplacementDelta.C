@@ -68,18 +68,6 @@ void preciceAdapter::FSI::DisplacementDelta::read(double* buffer, const unsigned
                     cellDisplacement_->boundaryFieldRef()[patchID][i][d] = buffer[bufferIndex++];
             }
 
-            // FSI-DISP-LOG: log incoming cell displacement from preCICE buffer
-            {
-                const vectorField& cellBF = cellDisplacement_->boundaryField()[patchID];
-                Info << "[FSI-DISP-LOG] DisplacementDelta::read"
-                     << " T=" << mesh_.time().timeName()
-                     << " patch=" << mesh_.boundary()[patchID].name()
-                     << " cellDisp_buffer: min=" << gMin(cellBF)
-                     << " max=" << gMax(cellBF)
-                     << " maxMag=" << gMax(mag(cellBF))
-                     << endl;
-            }
-
             // Get a reference to the displacement on the point patch in order to overwrite it
             vectorField& pointDisplacementFluidPatch(
                 refCast<vectorField>(
@@ -89,16 +77,6 @@ void preciceAdapter::FSI::DisplacementDelta::read(double* buffer, const unsigned
             // Afterwards, continue as usual
             pointDisplacementFluidPatch += interpolationObjects_[j]->faceToPointInterpolate(cellDisplacement_->boundaryField()[patchID]);
 
-            // FSI-DISP-LOG: log accumulated point displacement after += 
-            {
-                Info << "[FSI-DISP-LOG] DisplacementDelta::read"
-                     << " T=" << mesh_.time().timeName()
-                     << " patch=" << mesh_.boundary()[patchID].name()
-                     << " pointDisp_accumulated: min=" << gMin(pointDisplacementFluidPatch)
-                     << " max=" << gMax(pointDisplacementFluidPatch)
-                     << " maxMag=" << gMax(mag(pointDisplacementFluidPatch))
-                     << endl;
-            }
         }
         else if (this->locationType_ == LocationType::faceNodes)
         {
@@ -115,16 +93,6 @@ void preciceAdapter::FSI::DisplacementDelta::read(double* buffer, const unsigned
                     pointDisplacementFluidPatch[i][d] += buffer[bufferIndex++];
             }
 
-            // FSI-DISP-LOG: log accumulated point displacement (faceNodes)
-            {
-                Info << "[FSI-DISP-LOG] DisplacementDelta::read (faceNodes)"
-                     << " T=" << mesh_.time().timeName()
-                     << " patch=" << mesh_.boundary()[patchID].name()
-                     << " pointDisp_accumulated: min=" << gMin(static_cast<const vectorField&>(pointDisplacementFluidPatch))
-                     << " max=" << gMax(static_cast<const vectorField&>(pointDisplacementFluidPatch))
-                     << " maxMag=" << gMax(mag(static_cast<const vectorField&>(pointDisplacementFluidPatch)))
-                     << endl;
-            }
         }
     }
 }

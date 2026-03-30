@@ -1,0 +1,10 @@
+SOURCE = \
+Utilities.C \
+Interface.C \
+CouplingDataUser.C \
+FSI/ModuleFSI.C \
+module-generic/ModuleGeneric.C \
+Adapter.C \
+preciceAdapterFunctionObject.C \
+
+# sources

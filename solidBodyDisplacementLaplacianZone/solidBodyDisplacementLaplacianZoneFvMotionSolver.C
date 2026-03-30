@@ -393,31 +393,11 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::diffusivity()
 Foam::tmp<Foam::pointField>
 Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 {
-    // FSI-DISP-LOG: log cellDisplacement and pointDisplacement BEFORE interpolate
-    {
-        const scalarField magCellInt(mag(cellDisplacement_.primitiveField()));
-        const scalarField magPointPrim(mag(pointDisplacement_.primitiveField()));
-        Info << "[FSI-DISP-LOG] curPoints BEFORE interpolate:"
-             << " max|cellDisp.internal|=" << gMax(magCellInt)
-             << " avg|cellDisp.internal|=" << gAverage(magCellInt)
-             << " max|pointDisp.prim|=" << gMax(magPointPrim)
-             << endl;
-    }
-
     interpolationPtr_->interpolate
     (
         cellDisplacement_,
         pointDisplacement_
     );
-
-    // FSI-DISP-LOG: log pointDisplacement after cell-to-point interpolation
-    {
-        const scalarField magPrim(mag(pointDisplacement_.primitiveField()));
-        Info << "[FSI-DISP-LOG] curPoints after interpolate:"
-             << " max|pointDisp.prim|=" << gMax(magPrim)
-             << " avg|pointDisp.prim|=" << gAverage(magPrim)
-             << endl;
-    }
 
     if
     (
@@ -488,13 +468,17 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
         twoDCorrectPoints(curPoints);
 
-        // FSI-DISP-LOG: log max displacement from reference points0()
-        {
-            const pointField disp = curPoints - points0();
-            Info << "[FSI-DISP-LOG] curPoints mesh motion:"
-                 << " maxMag(curPoints - points0)=" << gMax(mag(disp))
-                 << endl;
-        }
+        // Reset cellDisplacement_ to zero after the mesh motion has been
+        // applied.  This field is only a scratch variable used inside solve()
+        // to drive the Laplacian; once curPoints() has consumed it, it has no
+        // physical meaning. Zeroing here ensures that the preCICE checkpoint
+        // (written immediately after curPoints() returns) always stores a clean
+        // zero field.  Without this, the checkpoint carries the Laplacian
+        // solution from the previous window (~8.6e-10), which becomes the
+        // initial guess for the MOVED-MESH Laplacian in the next window and
+        // causes overflow due to changed Laplacian coefficients.
+        cellDisplacement_.primitiveFieldRef() = vector::zero;
+        cellDisplacement_.correctBoundaryConditions();
 
         return tcurPoints;
     }
@@ -503,18 +487,9 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
 void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 {
-    // FSI-DISP-LOG: state at solve() entry (before anything)
-    Info << "[FSI-DISP-LOG] solve() ENTRY max|cellDisp.internal|="
-         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
-
     movePoints(fvMesh_.points());
 
     diffusivity().correct();
-
-    // FSI-DISP-LOG: after diffusivity().correct()
-    Info << "[FSI-DISP-LOG] solve() after diffusivity().correct() max|cellDisp.internal|="
-         << gMax(mag(cellDisplacement_.primitiveField()))
-         << endl;
 
     // Zero internal field BEFORE updateCoeffs so that the overset patch
     // interpolation (which reads donor cell values from the internal field)
@@ -550,10 +525,6 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
     {
         cellDisplacement_.correctBoundaryConditions();
     }
-
-    // FSI-DISP-LOG: after updateCoeffs, before Laplacian matrix assembly
-    Info << "[FSI-DISP-LOG] solve() before TEqn max|cellDisp.internal|="
-         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
 
     fvVectorMatrix TEqn
     (
@@ -591,10 +562,6 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
     fvOptions.constrain(TEqn);
     TEqn.solveSegregatedOrCoupled();
 
-    // FSI-DISP-LOG: after Laplacian solve, before fvOptions.correct()
-    Info << "[FSI-DISP-LOG] solve() after TEqn.solve max|cellDisp.internal|="
-         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
-
     fvOptions.correct(cellDisplacement_);
 
     // Post-solve: zero hole cells using cellMask as a safety net.
@@ -609,9 +576,6 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
         }
     }
 
-    // FSI-DISP-LOG: after cellMask zeroing
-    Info << "[FSI-DISP-LOG] solve() after cellMask zero max|cellDisp.internal|="
-         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
 }
 
 

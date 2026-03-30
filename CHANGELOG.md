@@ -125,3 +125,72 @@ does not trigger overset field interpolation.
    `dynamicOversetZoneDisplacementFvMesh`'s destructor (upstream
    `dynamicOversetFvMesh` uses an empty destructor; `lduPtr_` is
    automatically cleaned up by autoPtr).
+
+---
+
+#### 5. Prevent Laplacian singularity on overset hole cells at time-window transitions
+
+**File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+
+**Problem:** Starting from time-window 2, the `smoothSolver` for the
+`cellDisplacement_` Laplacian produced overflow values (~1.7e+16) in a
+single iteration, despite starting from a zeroed internal field.
+
+Root cause (two interacting issues):
+
+1. **Stale initial guess from preCICE checkpoint.** The preCICE checkpoint
+   is written immediately after `curPoints()` returns. At that point,
+   `cellDisplacement_.primitiveField()` holds the Laplacian solution from
+   the previous window (~8.6e-10 m). When the checkpoint is restored at
+   the start of the next window, the field is restored to this non-zero
+   state. The subsequent call to `cellDisplacement_.boundaryFieldRef().updateCoeffs()`
+   used this non-zero internal field as donor values for the overset BC,
+   producing a non-trivial initial guess for the Laplacian.
+
+2. **Near-zero diagonal on hole cells.** Interior overset hole cells are
+   not constrained by any patch BC. On a moved mesh, some hole cells are
+   entirely surrounded by other hole cells, giving them a near-zero
+   Laplacian diagonal. With a non-zero initial guess `x`, the Gauss-Seidel
+   smoother computes the correction as `x / diag ≈ x / 0 = ∞`, producing
+   overflow that propagates through the mesh motion to all mesh points.
+
+**Fix (two parts):**
+
+1. **Zero before `updateCoeffs`:** Reset `cellDisplacement_.primitiveFieldRef()`
+   to zero *before* calling `updateCoeffs()`, so the overset patch always
+   sees a zero donor field, matching the behavior of window 1.
+
+2. **Pin hole cells in matrix:** After assembling `TEqn`, add `VGREAT` to
+   the diagonal of all hole cells (`cellMask < 0.5`). This pins their
+   solution to zero without affecting the physical cells. The `smoothSolver`
+   then has a well-conditioned system regardless of mesh position.
+
+3. **Zero `cellDisplacement_` after `curPoints()` consumes it:** Reset the
+   field to zero at the end of `curPoints()` so the preCICE checkpoint
+   always stores a clean zero field. This is a belt-and-suspenders measure
+   on top of the zeroing in `solve()`.
+
+---
+
+#### 6. Zero `cellDisplacement_` after mesh motion in `curPoints()`
+
+**File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+
+**Problem:** `cellDisplacement_` is a scratch field whose only purpose is
+to carry BC data from the preCICE adapter into the Laplacian solver and
+then propagate it to `pointDisplacement_` via `interpolate()`. After
+`curPoints()` returns, the field has no physical meaning. However, it was
+left with the Laplacian solution from the current window in its internal
+field (`primitiveField()`).
+
+The preCICE adapter writes its checkpoint immediately after
+`fvMesh::movePoints()` returns (which calls `curPoints()`). If
+`cellDisplacement_` is non-zero at that moment, the checkpoint stores the
+Laplacian solution. On checkpoint restore, this non-zero field is reloaded
+into OpenFOAM, creating a spurious initial condition for the next
+time-window's Laplacian solve.
+
+**Fix:** Add `cellDisplacement_.primitiveFieldRef() = vector::zero` and
+`cellDisplacement_.correctBoundaryConditions()` at the end of the
+`else` branch in `curPoints()`, after the mesh points have been computed.
+This ensures every checkpoint stores `cellDisplacement_ = 0`.
