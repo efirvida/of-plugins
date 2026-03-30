@@ -399,6 +399,15 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
         pointDisplacement_
     );
 
+    // FSI-DISP-LOG: log pointDisplacement after cell-to-point interpolation
+    {
+        const scalarField magPrim(mag(pointDisplacement_.primitiveField()));
+        Info << "[FSI-DISP-LOG] curPoints after interpolate:"
+             << " max|pointDisp.prim|=" << gMax(magPrim)
+             << " avg|pointDisp.prim|=" << gAverage(magPrim)
+             << endl;
+    }
+
     if
     (
         pointDisplacement_.boundaryField().size()
@@ -467,6 +476,14 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
         }
 
         twoDCorrectPoints(curPoints);
+
+        // FSI-DISP-LOG: log max displacement from reference points0()
+        {
+            const pointField disp = curPoints - points0();
+            Info << "[FSI-DISP-LOG] curPoints mesh motion:"
+                 << " maxMag(curPoints - points0)=" << gMax(mag(disp))
+                 << endl;
+        }
 
         return tcurPoints;
     }

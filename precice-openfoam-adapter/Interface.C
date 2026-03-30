@@ -695,6 +695,21 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
                     for (label k = 0; k < sz; ++k)
                         allBufs[p][k] = globalData[start + k];
                 }
+
+                // FSI-DISP-LOG: log raw preCICE data before scatter
+                if (!globalData.empty())
+                {
+                    double dmin = *std::min_element(globalData.begin(), globalData.end());
+                    double dmax = *std::max_element(globalData.begin(), globalData.end());
+                    double dsum = 0.0;
+                    for (double v : globalData) dsum += v*v;
+                    Info << "[FSI-DISP-LOG] preCICE readData"
+                         << " data=" << couplingDataReader->dataName()
+                         << " n=" << globalData.size()
+                         << " min=" << dmin << " max=" << dmax
+                         << " RMS=" << Foam::sqrt(dsum / globalData.size())
+                         << endl;
+                }
             }
             // Replace deprecated scatterList (broken in v2506) with explicit
             // point-to-point scatter: master sends each rank's data slice.
