@@ -549,6 +549,14 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
         cellDisplacement_.correctBoundaryConditions();
     }
 
+    // Zero internal field before Laplacian solve to prevent hole-cell
+    // singularity at time-window transitions. Overset hole cells have
+    // zero diagonal in the Laplacian matrix; a non-zero initial guess
+    // (from checkpoint restore) causes the smoother to divide by ~0,
+    // producing overflow. The BC (set absolutely by Displacement::read)
+    // drives the solution, so the initial guess does not affect correctness.
+    cellDisplacement_.primitiveFieldRef() = vector::zero;
+
     // FSI-DISP-LOG: after updateCoeffs, before Laplacian matrix assembly
     Info << "[FSI-DISP-LOG] solve() before TEqn max|cellDisp.internal|="
          << gMax(mag(cellDisplacement_.primitiveField())) << endl;
