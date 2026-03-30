@@ -395,7 +395,7 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 {
     // FSI-DISP-LOG: log cellDisplacement and pointDisplacement BEFORE interpolate
     {
-        const scalarField magCellInt(mag(cellDisplacement_.internalField()));
+        const scalarField magCellInt(mag(cellDisplacement_.primitiveField()));
         const scalarField magPointPrim(mag(pointDisplacement_.primitiveField()));
         Info << "[FSI-DISP-LOG] curPoints BEFORE interpolate:"
              << " max|cellDisp.internal|=" << gMax(magCellInt)
@@ -503,9 +503,19 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
 void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 {
+    // FSI-DISP-LOG: state at solve() entry (before anything)
+    Info << "[FSI-DISP-LOG] solve() ENTRY max|cellDisp.internal|="
+         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
+
     movePoints(fvMesh_.points());
 
     diffusivity().correct();
+
+    // FSI-DISP-LOG: after diffusivity().correct()
+    Info << "[FSI-DISP-LOG] solve() after diffusivity().correct() max|cellDisp.internal|="
+         << gMax(mag(cellDisplacement_.primitiveField()))
+         << endl;
+
     pointDisplacement_.boundaryFieldRef().updateCoeffs();
 
     fv::options& fvOptions(fv::options::New(fvMesh_));
@@ -539,27 +549,9 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
         cellDisplacement_.correctBoundaryConditions();
     }
 
-    // FSI-DISP-LOG: log cellDisplacement BC after updateCoeffs, before Laplacian
-    {
-        scalar maxMagBC = 0.0;
-        label maxPatch = -1;
-        forAll(cellDisplacement_.boundaryField(), patchi)
-        {
-            const scalarField pm(mag(cellDisplacement_.boundaryField()[patchi]));
-            if (pm.size() > 0)
-            {
-                const scalar pmMax = gMax(pm);
-                if (pmMax > maxMagBC) { maxMagBC = pmMax; maxPatch = patchi; }
-            }
-        }
-        const scalarField magInt(mag(cellDisplacement_.internalField()));
-        Info << "[FSI-DISP-LOG] solve() before Laplacian:"
-             << " max|cellDisp.BC|=" << maxMagBC
-             << " (patch=" << maxPatch << ")"
-             << " max|cellDisp.internal|=" << gMax(magInt)
-             << " avg|cellDisp.internal|=" << gAverage(magInt)
-             << endl;
-    }
+    // FSI-DISP-LOG: after updateCoeffs, before Laplacian matrix assembly
+    Info << "[FSI-DISP-LOG] solve() before TEqn max|cellDisp.internal|="
+         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
 
     fvVectorMatrix TEqn
     (
@@ -576,7 +568,16 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     fvOptions.constrain(TEqn);
     TEqn.solveSegregatedOrCoupled();
+
+    // FSI-DISP-LOG: after Laplacian solve, before fvOptions.correct()
+    Info << "[FSI-DISP-LOG] solve() after TEqn.solve max|cellDisp.internal|="
+         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
+
     fvOptions.correct(cellDisplacement_);
+
+    // FSI-DISP-LOG: after fvOptions.correct()
+    Info << "[FSI-DISP-LOG] solve() after fvOptions.correct max|cellDisp.internal|="
+         << gMax(mag(cellDisplacement_.primitiveField())) << endl;
 }
 
 
