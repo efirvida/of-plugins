@@ -516,20 +516,22 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
          << gMax(mag(cellDisplacement_.primitiveField()))
          << endl;
 
+    // Zero internal field BEFORE updateCoeffs so that the overset patch
+    // interpolation (which reads donor cell values from the internal field)
+    // starts from zero in every time-window iteration.  Without this, the
+    // preCICE checkpoint restore leaves a non-zero internal field at the
+    // start of window 2+, which the overset BC picks up as donor values,
+    // creating a non-trivial initial condition that interacts badly with
+    // the near-singular hole-cell rows in the Laplacian matrix.
+    cellDisplacement_.primitiveFieldRef() = vector::zero;
+
     pointDisplacement_.boundaryFieldRef().updateCoeffs();
 
     fv::options& fvOptions(fv::options::New(fvMesh_));
 
-    // Update boundary coefficients before building the laplacian matrix.
-    // We use the same pattern as the standard displacementLaplacianFvMotionSolver.
-    // On overset meshes, calling correctBoundaryConditions() would trigger
-    // oversetFvPatchField::initEvaluate() which performs field interpolation
-    // via mapDistribute, introducing unwanted MPI communication that can
-    // corrupt heap metadata (detected as "corrupted double-linked list"
-    // during the next inverseDistance::update() call).
-    // On cyclicAMI meshes (without overset), correctBoundaryConditions()
-    // is needed to prevent MPI deadlock from stale AMI data during the
-    // non-orthogonal correction (fvc::grad inside fvm::laplacian).
+    // On overset meshes use updateCoeffs (not correctBoundaryConditions)
+    // to avoid oversetFvPatchField::initEvaluate triggering mapDistribute
+    // MPI comms that corrupt heap metadata.
     bool hasOversetPatch = false;
     forAll(cellDisplacement_.boundaryField(), patchi)
     {
@@ -549,14 +551,6 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
         cellDisplacement_.correctBoundaryConditions();
     }
 
-    // Zero internal field before Laplacian solve to prevent hole-cell
-    // singularity at time-window transitions. Overset hole cells have
-    // zero diagonal in the Laplacian matrix; a non-zero initial guess
-    // (from checkpoint restore) causes the smoother to divide by ~0,
-    // producing overflow. The BC (set absolutely by Displacement::read)
-    // drives the solution, so the initial guess does not affect correctness.
-    cellDisplacement_.primitiveFieldRef() = vector::zero;
-
     // FSI-DISP-LOG: after updateCoeffs, before Laplacian matrix assembly
     Info << "[FSI-DISP-LOG] solve() before TEqn max|cellDisp.internal|="
          << gMax(mag(cellDisplacement_.primitiveField())) << endl;
@@ -574,6 +568,26 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
         fvOptions(cellDisplacement_)
     );
 
+    // Constrain hole cells to zero displacement by adding a large diagonal
+    // contribution.  Interior hole cells (cellMask < 0.5) are not on any
+    // patch so oversetFvPatchField::manipulateMatrix() does not constrain
+    // them.  Their Laplacian diagonal can be near-zero (all neighbours are
+    // also hole cells), causing the Gauss-Seidel smoother to divide by ~0
+    // and produce overflow.  Pinning them to zero is correct: the motion
+    // field has no physical meaning inside the overset hole region.
+    const volScalarField* cellMaskPtr =
+        fvMesh_.findObject<volScalarField>("cellMask");
+    if (cellMaskPtr)
+    {
+        const scalarField& mask = cellMaskPtr->primitiveField();
+        scalarField& diag = TEqn.diag();
+        forAll(mask, celli)
+        {
+            if (mask[celli] < 0.5)
+                diag[celli] += VGREAT;
+        }
+    }
+
     fvOptions.constrain(TEqn);
     TEqn.solveSegregatedOrCoupled();
 
@@ -583,8 +597,20 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     fvOptions.correct(cellDisplacement_);
 
-    // FSI-DISP-LOG: after fvOptions.correct()
-    Info << "[FSI-DISP-LOG] solve() after fvOptions.correct max|cellDisp.internal|="
+    // Post-solve: zero hole cells using cellMask as a safety net.
+    if (cellMaskPtr)
+    {
+        const scalarField& mask = cellMaskPtr->primitiveField();
+        vectorField& dispRef = cellDisplacement_.primitiveFieldRef();
+        forAll(dispRef, celli)
+        {
+            if (mask[celli] < 0.5)
+                dispRef[celli] = Zero;
+        }
+    }
+
+    // FSI-DISP-LOG: after cellMask zeroing
+    Info << "[FSI-DISP-LOG] solve() after cellMask zero max|cellDisp.internal|="
          << gMax(mag(cellDisplacement_.primitiveField())) << endl;
 }
 
