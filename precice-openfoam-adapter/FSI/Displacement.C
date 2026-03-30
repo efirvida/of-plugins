@@ -110,6 +110,18 @@ void preciceAdapter::FSI::Displacement::read(double* buffer, const unsigned int 
                     cellDisplacement_->boundaryFieldRef()[patchID][i][d] = buffer[bufferIndex++];
             }
 
+            // FSI-DISP-LOG: log what was written to cellDisplacement BC from preCICE
+            {
+                const vectorField& cellBF = cellDisplacement_->boundaryField()[patchID];
+                Info << "[FSI-DISP-LOG] Displacement::read"
+                     << " T=" << mesh_.time().timeName()
+                     << " patch=" << mesh_.boundary()[patchID].name()
+                     << " cellDisp.BC: maxMag=" << gMax(mag(cellBF))
+                     << " n=" << cellBF.size()
+                     << " pointDisp_ptr=" << (pointDisplacement_ ? "set" : "NULL")
+                     << endl;
+            }
+
             if (pointDisplacement_ != nullptr)
             {
                 // Get a reference to the displacement on the point patch in order to overwrite it
@@ -120,6 +132,13 @@ void preciceAdapter::FSI::Displacement::read(double* buffer, const unsigned int 
                 // Overwrite the node based patch using the interpolation objects and the cell based vector field
                 // Afterwards, continue as usual
                 pointDisplacementFluidPatch = interpolationObjects_[j]->faceToPointInterpolate(cellDisplacement_->boundaryField()[patchID]);
+
+                // FSI-DISP-LOG: log what was written to pointDisplacement BC
+                Info << "[FSI-DISP-LOG] Displacement::read"
+                     << " T=" << mesh_.time().timeName()
+                     << " patch=" << mesh_.boundary()[patchID].name()
+                     << " pointDisp.BC: maxMag=" << gMax(mag(pointDisplacementFluidPatch))
+                     << endl;
             }
         }
         else if (this->locationType_ == LocationType::faceNodes)
