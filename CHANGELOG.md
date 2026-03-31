@@ -2,6 +2,110 @@
 
 ## [Unreleased] — 2026-03-31
 
+### Code Quality & Maintainability
+
+#### 1. Refactor solidBodyDisplacementLaplacianZone
+
+**Files:**
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.H`
+
+**Changes:**
+- Extract duplicated constructor logic (~150 lines each) into `initZoneAndPointIDs()`
+- Replace deprecated `lookup()` with `get<word>()` (3 occurrences)
+- Fix debug block crash: `diffusivityPtr_()` when `nullptr` → read config string instead
+- Add `holeCellThreshold_` named constant instead of magic number `0.5`
+- Rebuild `pointIDs_` after topology change in `updateMesh()`
+- Add explicit `pointMesh.H` include (was relying on transitive include)
+- Rename `SBMFPtr_` → `solidBodyMotionPtr_` (follows naming convention)
+- Add null check for `solidBodyMotionPtr_` after construction
+- Fix `IOobject::MUST_READ` → `NO_READ` (contradicted `typeHeaderOk()` check)
+- Use `dimLength` instead of `pointDisplacement_.dimensions()` (avoids UB in member-init)
+- Add destructor cleanup for `diffusivityPtr_`
+
+---
+
+#### 2. Fix dynamicOversetZoneDisplacementFvMesh robustness
+
+**Files:**
+- `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.C`
+- `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.H`
+
+**Changes:**
+- Fix stale header guard: `dynamicOversetMotionSolverFvMesh_H` → `dynamicOversetZoneDisplacementFvMesh_H`
+- Add `IOstreams.H` include for `IOstreamOption` type
+- Check `init()` return value and throw `FatalError` on failure
+- Document `const_cast` safety for stencil `movePoints()` call
+- Clarify critical ordering in `update()` (motion before overset update)
+- Simplify `writeObject()` boolean logic (explicit `ok1 && ok2`)
+- Document why destructor is empty (RAII handles cleanup)
+
+---
+
+#### 3. Fix fsiOmega field registration and logging
+
+**File:** `fsiOmega/preciceOmega.C`
+
+**Changes:**
+- Register created field with Time registry via `checkIn()` (preCICE adapter can now find it)
+- Guard `Info<<` output with `debug` flag (was flooding logs every timestep)
+- Validate `fieldName_` not empty in `read()`
+- Fix copy constructor: share field pointer (shallow copy) instead of creating disconnected instance
+
+---
+
+#### 4. Modernize precice-openfoam-adapter memory management
+
+**Files:**
+- `precice-openfoam-adapter/Adapter.C`, `Adapter.H`
+- `precice-openfoam-adapter/Interface.C`, `Interface.H`
+- `precice-openfoam-adapter/CouplingDataUser.C`, `CouplingDataUser.H`
+- `precice-openfoam-adapter/FSI/Displacement.C`, `Displacement.H`
+- `precice-openfoam-adapter/FSI/FSI.C`, `FSI.H`
+- `precice-openfoam-adapter/FSI/ModuleFSI.C`
+- `precice-openfoam-adapter/FSI/ForceBase.C`
+
+**Changes:**
+- Replace raw `new`/`delete` with `std::unique_ptr` for:
+  - `meshPoints_`, `meshOldPoints_` in Adapter
+  - `interpolationObjects_` in Displacement
+  - `couplingDataReaders_`, `couplingDataWriters_` in Interface
+- Simplify Interface destructor to `= default` (RAII handles cleanup)
+- Pass strings by `const reference` to avoid copies in Interface and CouplingDataUser
+- Use `vector::insert` instead of manual push_back loops for MPI gather buffers
+- Remove stale TODO referencing deleted Stress class in ForceBase.C
+
+---
+
+#### 5. Remove unused FSI modules (Stress, DisplacementDelta)
+
+**Deleted files:**
+- `precice-openfoam-adapter/FSI/Stress.C`, `Stress.H`
+- `precice-openfoam-adapter/FSI/DisplacementDelta.C`, `DisplacementDelta.H`
+
+**Changes:**
+- Remove `new Stress` / `new DisplacementDelta` from FSI.C writer/reader registration
+- Remove includes from FSI.H
+- Remove `#include` directives from ModuleFSI.C
+- Update `docs/config.md` and `docs/README.md` to remove references to deleted data types
+
+---
+
+#### 6. Add AGENTS.md for coding agents
+
+**File:** `AGENTS.md` (new)
+
+**Content:**
+- Build/clean commands for all plugins
+- Testing approach (manual, no automated suite)
+- OpenFOAM code style guidelines
+- Naming conventions, types, error handling patterns
+- MPI/parallel considerations
+- Overset mesh specifics
+- Known issues
+
+---
+
 ### Bug Fixes (OpenFOAM v2506 compatibility)
 
 #### 1. Replace deprecated `Pstream::scatterList`/`gatherList` with `OPstream`/`IPstream`
@@ -60,8 +164,8 @@ ranks before the matrix assembly begins.
 #### 3. Prevent SIGSEGV on overset meshes during motion solver init
 
 **Files:**
-- `dynamicOversetMotionSolverFvMesh/dynamicOversetMotionSolverFvMesh.C`
-- `dynamicOversetMotionSolverFvMesh/dynamicOversetMotionSolverFvMesh.H`
+- `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.C`
+- `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.H`
 - `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
 
 **Problem:** When `solidBodyDisplacementLaplacianZone` is used with the
@@ -94,7 +198,7 @@ always occurs on the same MPI rank for a given mesh decomposition.
 
 **Files:**
 - `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
-- `dynamicOversetMotionSolverFvMesh/dynamicOversetMotionSolverFvMesh.C`
+- `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.C`
 
 **Problem:** After the SIGSEGV init fix (Bug 3), the overset simulation
 started successfully but crashed on the 3rd time step with **"corrupted
