@@ -64,6 +64,7 @@ bool preciceAdapter::FSI::FluidStructureInteraction::readConfig(const IOdictiona
     if (solverType_ == "solid" && !restartFromDeformed_)
     {
         adapterInfo("The option \"restartFromDeformed\" is only valid for Fluid solvers. Solid solvers usually use exclusively the reference configuration for computations and the mesh is not deforming over time.", "error");
+        return false;
     }
 
     if (solverType_ != "solid")

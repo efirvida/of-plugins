@@ -9,11 +9,9 @@ preciceAdapter::FSI::Displacement::Displacement(
 : pointDisplacement_(
     namePointDisplacement == "unused"
         ? nullptr
-        : const_cast<pointVectorField*>(
-            &mesh.lookupObject<pointVectorField>(namePointDisplacement))),
+        : &mesh.lookupObjectRef<pointVectorField>(namePointDisplacement)),
   cellDisplacement_(
-      const_cast<volVectorField*>(
-          &mesh.lookupObject<volVectorField>(nameCellDisplacement))),
+      &mesh.lookupObjectRef<volVectorField>(nameCellDisplacement)),
   mesh_(mesh)
 {
     dataType_ = vector;
