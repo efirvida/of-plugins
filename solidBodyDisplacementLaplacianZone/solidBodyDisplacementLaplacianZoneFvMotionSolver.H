@@ -133,7 +133,7 @@ class solidBodyDisplacementLaplacianZoneFvMotionSolver
     // Private data
 
         //- Motion function for rigid transformation
-        autoPtr<solidBodyMotionFunction> SBMFPtr_;
+        autoPtr<solidBodyMotionFunction> solidBodyMotionPtr_;
 
         //- Cell-centre motion field
         mutable volVectorField cellDisplacement_;
@@ -156,6 +156,9 @@ class solidBodyDisplacementLaplacianZoneFvMotionSolver
         //- True when rigid transform is applied to the whole mesh
         bool moveAllCells_;
 
+        //- Threshold for identifying overset hole cells (cellMask < this)
+        static constexpr scalar holeCellThreshold_ = 0.5;
+
 
     // Private Member Functions
 
@@ -170,6 +173,9 @@ class solidBodyDisplacementLaplacianZoneFvMotionSolver
         (
             const solidBodyDisplacementLaplacianZoneFvMotionSolver&
         ) = delete;
+
+        //- Common initialization: resolve zone/set, collect point IDs
+        void initZoneAndPointIDs();
 
 
 public:

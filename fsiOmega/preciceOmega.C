@@ -51,7 +51,14 @@ namespace Function1Types
 void Foam::Function1Types::preciceOmega::read(const dictionary& dict)
 {
     fieldName_ = dict.getOrDefault<word>("fieldName", "omega");
-    
+
+    if (fieldName_.empty())
+    {
+        FatalErrorInFunction
+            << "fieldName cannot be empty"
+            << exit(FatalError);
+    }
+
     // Reset field pointers since we might have a new field name
     omegaField_ = nullptr;
     omegaFieldOwning_.reset();
@@ -102,8 +109,8 @@ void Foam::Function1Types::preciceOmega::initField() const
         return;
     }
     
-    // Field not found - create it in Time registry
-    // The adapter will find and use this same field when it initializes
+    // Field not found - create it and register with Time registry
+    // so the preCICE adapter can find and update it
     omegaFieldOwning_.reset(new uniformDimensionedScalarField(
         IOobject(
             fieldName_,
@@ -118,6 +125,9 @@ void Foam::Function1Types::preciceOmega::initField() const
             0.0
         )
     ));
+
+    // Register with Time registry so preCICE adapter can find it
+    omegaFieldOwning_->checkIn();
 
     omegaField_ = omegaFieldOwning_.get();
     
@@ -155,7 +165,11 @@ Foam::Function1Types::preciceOmega::preciceOmega
     Function1<scalar>(rhs),
     obrPtr_(rhs.obrPtr_),
     fieldName_(rhs.fieldName_),
-    omegaField_(nullptr)  // Don't copy the pointer, will be looked up again
+    // Shallow copy: share the same field pointer as the original.
+    // Both instances will read from the same registry field, ensuring
+    // consistent values. The clone does NOT take ownership of the field.
+    omegaField_(rhs.omegaField_),
+    omegaFieldOwning_(nullptr)
 {}
 
 
@@ -164,13 +178,16 @@ Foam::Function1Types::preciceOmega::preciceOmega
 Foam::scalar Foam::Function1Types::preciceOmega::value(const scalar t) const
 {
     initField();
-    
-    const scalar omega = omegaField_->value();
-    const scalar rpm = omega * 60.0 / (2.0 * constant::mathematical::pi);
 
-    Info<< "preciceOmega::value(t=" << t << ")"
-        << " omega=" << omega << " [rad/s]"
-        << " (" << rpm << " [rpm])" << endl;
+    const scalar omega = omegaField_->value();
+
+    if (debug)
+    {
+        const scalar rpm = omega * 60.0 / (2.0 * constant::mathematical::pi);
+        Info<< "preciceOmega::value(t=" << t << ")"
+            << " omega=" << omega << " [rad/s]"
+            << " (" << rpm << " [rpm])" << endl;
+    }
 
     return omega;
 }

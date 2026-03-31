@@ -66,12 +66,12 @@ Description
     \endverbatim
 
 SourceFiles
-    dynamicOversetMotionSolverFvMesh.C
+    dynamicOversetZoneDisplacementFvMesh.C
 
 \*---------------------------------------------------------------------------*/
 
-#ifndef dynamicOversetMotionSolverFvMesh_H
-#define dynamicOversetMotionSolverFvMesh_H
+#ifndef dynamicOversetZoneDisplacementFvMesh_H
+#define dynamicOversetZoneDisplacementFvMesh_H
 
 #include "motionSolver.H"
 #include "dynamicMotionSolverFvMesh.H"
@@ -79,6 +79,7 @@ SourceFiles
 #include "cellCellStencilObject.H"
 #include "fvMatrices.H"
 #include "volFields.H"
+#include "IOstreams.H"
 
 namespace Foam
 {

@@ -57,7 +57,12 @@ Foam::dynamicOversetZoneDisplacementFvMesh::dynamicOversetZoneDisplacementFvMesh
 {
     if (doInit)
     {
-        init(true);
+        if (!init(true))
+        {
+            FatalErrorInFunction
+                << "Failed to initialise dynamicOversetZoneDisplacementFvMesh"
+                << exit(FatalError);
+        }
     }
 }
 
@@ -75,28 +80,40 @@ bool Foam::dynamicOversetZoneDisplacementFvMesh::init(const bool doInit)
     // model construction evaluating k/epsilon with overset BCs) triggers
     // oversetFvPatchField::initEvaluate() which accesses the null
     // cellInterpolationMap, corrupting the heap.
-    const_cast<cellCellStencilObject&>
-    (
-        Stencil::New(*this)
-    ).movePoints();
+    //
+    // The const_cast is safe here because:
+    // - Stencil::New() returns a reference to the MeshObject-cached stencil
+    // - movePoints() is a legitimate state update for the stencil
+    // - The stencil is mutable by design; the const qualifier on New()
+    //   reflects OpenFOAM's MeshObject interface, not immutability intent
+    cellCellStencilObject& stencil =
+        const_cast<cellCellStencilObject&>(Stencil::New(*this));
+
+    stencil.movePoints();
 
     return dynamicMotionSolverFvMesh::init(doInit);
 }
 
 
 Foam::dynamicOversetZoneDisplacementFvMesh::~dynamicOversetZoneDisplacementFvMesh()
-{}
+{
+    // No explicit cleanup needed:
+    // - oversetFvMeshBase destructor handles stencil via MeshObject lifecycle
+    // - dynamicMotionSolverFvMesh destructor handles motion solver via autoPtr
+    // - lduPtr_ is automatically cleaned up by autoPtr
+}
 
 
 bool Foam::dynamicOversetZoneDisplacementFvMesh::update()
 {
+    // Order is critical: motion must be applied before overset stencil update.
+    // Reversing this order causes stale stencil data to be used during mesh
+    // motion, leading to incorrect interpolation and potential solver failure.
     if (!dynamicMotionSolverFvMesh::update())
     {
         return false;
     }
 
-    // Keep same ordering used by upstream dynamicOversetFvMesh:
-    // first move mesh, then refresh overset addressing/stencil state.
     oversetFvMeshBase::update();
 
     return true;
@@ -109,10 +126,11 @@ bool Foam::dynamicOversetZoneDisplacementFvMesh::writeObject
     const bool writeOnProc
 ) const
 {
-    bool ok =
+    bool ok1 =
         dynamicMotionSolverFvMesh::writeObject(streamOpt, writeOnProc);
-    ok = oversetFvMeshBase::writeObject(streamOpt, writeOnProc) && ok;
-    return ok;
+    bool ok2 =
+        oversetFvMeshBase::writeObject(streamOpt, writeOnProc);
+    return ok1 && ok2;
 }
 
 
