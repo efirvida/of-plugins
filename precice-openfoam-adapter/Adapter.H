@@ -105,16 +105,16 @@ private:
     std::vector<Interface*> interfaces_;
 
     //- preCICE solver interface
-    precice::Participant* precice_ = nullptr;
+    std::unique_ptr<precice::Participant> precice_;
 
     //- preCICE solver interface initialized
     bool preciceInitialized_ = false;
 
     //- Fluid-Structure Interaction module object
-    FSI::FluidStructureInteraction* FSI_ = nullptr;
+    std::unique_ptr<FSI::FluidStructureInteraction> FSI_;
 
     //- Generic module object
-    Generic::GenericInterface* Generic_ = nullptr;
+    std::unique_ptr<Generic::GenericInterface> Generic_;
 
     // NOTE: Add here a pointer for your new module object
 

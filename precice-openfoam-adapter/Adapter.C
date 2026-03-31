@@ -246,7 +246,7 @@ void preciceAdapter::Adapter::configFileRead()
 
     if (genericModuleEnabled_)
     {
-        Generic_ = new Generic::GenericInterface(mesh_);
+        Generic_ = std::make_unique<Generic::GenericInterface>(mesh_);
         if (!Generic_->configure(preciceDict))
         {
             return;
@@ -257,7 +257,7 @@ void preciceAdapter::Adapter::configFileRead()
     // FSI-specific options and configure it.
     if (FSIenabled_)
     {
-        FSI_ = new FSI::FluidStructureInteraction(mesh_, runTime_);
+        FSI_ = std::make_unique<FSI::FluidStructureInteraction>(mesh_, runTime_);
         if (!FSI_->configure(preciceDict))
         {
             adapterInfo("There was an error while configuring the FSI module",
@@ -306,7 +306,7 @@ try
     DEBUG(adapterInfo("Creating the preCICE solver interface..."));
     DEBUG(adapterInfo("  Number of processes: " + std::to_string(Pstream::nProcs())));
     DEBUG(adapterInfo("  MPI rank: " + std::to_string(Pstream::myProcNo())));
-    precice_ = new precice::Participant(participantName_, preciceConfigFilename_, Pstream::myProcNo(), Pstream::nProcs());
+    precice_ = std::make_unique<precice::Participant>(participantName_, preciceConfigFilename_, Pstream::myProcNo(), Pstream::nProcs());
     DEBUG(adapterInfo("  preCICE solver interface was created."));
 
     ACCUMULATE_TIMER(timeInPreciceConstruct_);
@@ -1400,11 +1400,10 @@ void preciceAdapter::Adapter::teardown()
 {
     // If the solver interface was not deleted before, delete it now.
     // Normally it should be deleted when isCouplingOngoing() becomes false.
-    if (nullptr != precice_)
+    if (precice_)
     {
         DEBUG(adapterInfo("Destroying the preCICE solver interface..."));
-        delete precice_;
-        precice_ = nullptr;
+        precice_.reset();
     }
 
     // Delete the preCICE solver interfaces
@@ -1501,24 +1500,22 @@ void preciceAdapter::Adapter::teardown()
 
         checkpointing_ = false;
 
-        delete meshPoints_;
-        delete meshOldPoints_;
+        meshPoints_.reset();
+        meshOldPoints_.reset();
     }
 
     // Delete the FSI module
-    if (nullptr != FSI_)
+    if (FSI_)
     {
         DEBUG(adapterInfo("Destroying the FSI module..."));
-        delete FSI_;
-        FSI_ = nullptr;
+        FSI_.reset();
     }
 
     // Delete the Generic module
-    if (nullptr != Generic_)
+    if (Generic_)
     {
         DEBUG(adapterInfo("Destroying the Generic module..."));
-        delete Generic_;
-        Generic_ = nullptr;
+        Generic_.reset();
     }
 
     // NOTE: Delete your new module here
