@@ -39,6 +39,11 @@ namespace Function1Types
 {
     defineTypeNameAndDebug(preciceOmega, 0);
 
+    // Register preciceOmega as a scalar Function1 via the FieldFunction1 wrapper
+    // so that OpenFOAM's run-time selection table can instantiate it from a
+    // dictionary entry.  There is no single macro for this combination, so the
+    // table entry is added manually using the same pattern that
+    // makeScalarFunction1 / makeFunction1 would expand to internally.
     Function1<scalar>::adddictionaryConstructorToTable
         <FieldFunction1<preciceOmega>>
         addpreciceOmegascalarConstructorToTable_;
