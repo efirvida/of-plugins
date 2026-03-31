@@ -357,14 +357,7 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
         pointDisplacement_
     );
 
-    if
-    (
-        pointDisplacement_.boundaryField().size()
-     != cellDisplacement_.boundaryField().size()
-    )
-    {
-        pointDisplacement_.correctBoundaryConditions();
-    }
+    pointDisplacement_.correctBoundaryConditions();
 
     tmp<pointField> tnewPoints(new pointField(points0()));
 
@@ -443,7 +436,7 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
         // solution from the previous window (~8.6e-10), which becomes the
         // initial guess for the MOVED-MESH Laplacian in the next window and
         // causes overflow due to changed Laplacian coefficients.
-        cellDisplacement_.primitiveFieldRef() = vector::zero;
+        cellDisplacement_.primitiveFieldRef() = Zero;
         cellDisplacement_.correctBoundaryConditions();
 
         return tcurPoints;
