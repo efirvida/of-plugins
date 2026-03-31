@@ -5,7 +5,7 @@ Standalone OpenFOAM plugin collection for rotating FSI cases and preCICE couplin
 This repository provides four independent plugins:
 
 1. `solidBodyDisplacementLaplacianZone` — motion solver for zonal rigid body + mesh deformation
-2. `dynamicOversetMotionSolverFvMesh` — overset wrapper for the above
+2. `dynamicOversetZoneDisplacementFvMesh` — overset wrapper for the above
 3. `fsiOmega` — `preciceOmega` Function1 for preCICE angular velocity coupling
 4. `precice-openfoam-adapter` — preCICE OpenFOAM adapter (diverging fork)
 
@@ -17,7 +17,7 @@ No submodules are used. All code is self-contained and built with `wmake`.
   - Motion solver that combines:
     - rigid rotation of a selected zone (`cellZone` or `cellSet`), and
     - Laplacian mesh deformation for the rest of the mesh.
-- `dynamicOversetMotionSolverFvMesh/`
+- `dynamicOversetZoneDisplacementFvMesh/`
   - Overset-enabled `dynamicFvMesh` wrapper for a single motion solver.
   - Lets you keep the same `motionSolver` and `...Coeffs` syntax used by
     `dynamicMotionSolverFvMesh`, but on overset meshes.
@@ -54,7 +54,7 @@ From repository root:
 This builds the three motion-related libraries:
 
 - `libsolidBodyDisplacementLaplacianZoneFvMotionSolver.so`
-- `libdynamicOversetMotionSolverFvMesh.so`
+- `libdynamicOversetZoneDisplacementFvMesh.so`
 - `libfsiOmega.so`
 
 into `FOAM_USER_LIBBIN`.
@@ -71,7 +71,7 @@ You can also build each component separately:
 
 ```bash
 cd solidBodyDisplacementLaplacianZone && ./Allwmake
-cd ../dynamicOversetMotionSolverFvMesh && ./Allwmake
+cd ../dynamicOversetZoneDisplacementFvMesh && ./Allwmake
 cd ../fsiOmega && ./Allwmake
 cd ../precice-openfoam-adapter && ./Allwmake   # requires preCICE dev files
 ```
@@ -162,14 +162,14 @@ Ensure your adapter configuration uses the same field name
 
 Use this configuration for **overset (multi-mesh)** cases. The key differences are:
 
-1. **dynamicFvMesh type** changes to `dynamicOversetMotionSolverFvMesh`
+1. **dynamicFvMesh type** changes to `dynamicOversetZoneDisplacementFvMesh`
 2. **controlDict** must load the overset wrapper library
 3. **Otherwise**, the motion solver syntax remains identical
 
 Example `constant/dynamicMeshDict`:
 
 ```c++
-dynamicFvMesh   dynamicOversetMotionSolverFvMesh;
+dynamicFvMesh   dynamicOversetZoneDisplacementFvMesh;
 
 motionSolverLibs
 (
@@ -207,7 +207,7 @@ solidBodyDisplacementLaplacianZoneCoeffs
 In `system/controlDict`, **must** load the overset wrapper library:
 
 ```c++
-libs (overset fvMotionSolvers dynamicOversetMotionSolverFvMesh);
+libs (overset fvMotionSolvers dynamicOversetZoneDisplacementFvMesh);
 ```
 
 **Key point:** This avoids the `solvers { ... }` multi-motion accumulation approach that was problematic before. The overset wrapper allows you to keep **a single motion solver** with simple syntax, even on overset meshes.

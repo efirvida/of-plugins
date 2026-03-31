@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — 2025-03-27
+## [Unreleased] — 2026-03-31
 
 ### Bug Fixes (OpenFOAM v2506 compatibility)
 
@@ -194,3 +194,37 @@ time-window's Laplacian solve.
 `cellDisplacement_.correctBoundaryConditions()` at the end of the
 `else` branch in `curPoints()`, after the mesh points have been computed.
 This ensures every checkpoint stores `cellDisplacement_ = 0`.
+
+---
+
+#### 7. Refactor preCICE adapter MPI logic into template helpers
+
+**Files:**
+- `precice-openfoam-adapter/Utilities.H`
+- `precice-openfoam-adapter/Interface.C`
+
+**Problem:** The manual point-to-point MPI communication logic introduced for v2506 compatibility was repetitive across multiple methods in `Interface.C`, making the code harder to maintain and read.
+
+**Fix:** Abstracted the gather, scatter, and broadcast logic into template helper functions in `preciceAdapter` namespace within `Utilities.H`. This reduces code duplication and ensures a consistent implementation of the v2506-compatible MPI patterns.
+
+---
+
+#### 8. Standardize overset wrapper naming
+
+**Files:**
+- `dynamicOversetZoneDisplacementFvMesh/` (renamed from `dynamicOversetMotionSolverFvMesh/`)
+- `README.md`
+
+**Problem:** The overset wrapper directory and file names did not match the class name `dynamicOversetZoneDisplacementFvMesh`, leading to confusion.
+
+**Fix:** Renamed the directory and source files to match the class name. Updated `Make/files` and `README.md` to reflect these changes.
+
+---
+
+#### 9. Modernize mathematical constants in `fsiOmega`
+
+**File:** `fsiOmega/preciceOmega.C`
+
+**Problem:** Usage of `M_PI` is not fully OpenFOAM-compliant and might rely on non-standard system headers.
+
+**Fix:** Replaced `M_PI` with `Foam::constant::mathematical::pi` and included `mathematicalConstants.H`.
