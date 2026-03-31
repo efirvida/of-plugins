@@ -104,7 +104,9 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::initZoneAndPointIDs
         cellIDs = set.toc();
     }
 
-    const label nCells = returnReduce(cellIDs.size(), sumOp<label>());
+    cellIDs_.transfer(cellIDs);
+
+    const label nCells = returnReduce(cellIDs_.size(), sumOp<label>());
     moveAllCells_ = (nCells == 0);
 
     if (moveAllCells_)
@@ -115,9 +117,9 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::initZoneAndPointIDs
     {
         boolList movePts(fvMesh_.nPoints(), false);
 
-        forAll(cellIDs, i)
+        forAll(cellIDs_, i)
         {
-            const label celli = cellIDs[i];
+            const label celli = cellIDs_[i];
             const cell& c = fvMesh_.cells()[celli];
 
             forAll(c, j)
@@ -195,6 +197,8 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
         )
       : -1
     ),
+        cellIDs_(),
+        cellCentres0_(fvMesh_.cellCentres()),
     pointIDs_(),
     moveAllCells_(false)
 {
@@ -289,6 +293,8 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
         )
       : -1
     ),
+        cellIDs_(),
+        cellCentres0_(fvMesh_.cellCentres()),
     pointIDs_(),
     moveAllCells_(false)
 {
@@ -382,12 +388,35 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
     const pointField& newPoints = tnewPoints();
 
+    pointField zoneRigidDisplacement;
+
+    if (!moveAllCells_ && pointIDs_.size())
+    {
+        const pointField zonePoints0(points0(), pointIDs_);
+
+        zoneRigidDisplacement = transformPoints
+        (
+            solidBodyMotionPtr_().transformation(),
+            zonePoints0
+        ) - zonePoints0;
+    }
+
     if (pointLocation_)
     {
         pointLocation_().primitiveFieldRef() =
             newPoints + pointDisplacement_.internalField();
 
         pointLocation_().correctBoundaryConditions();
+
+        if (zoneRigidDisplacement.size())
+        {
+            pointField& pointLocation = pointLocation_().primitiveFieldRef();
+
+            forAll(pointIDs_, i)
+            {
+                pointLocation[pointIDs_[i]] -= zoneRigidDisplacement[i];
+            }
+        }
 
         if (frozenPointsZone_ != -1)
         {
@@ -413,6 +442,14 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
         );
         pointField& curPoints = tcurPoints.ref();
 
+        if (zoneRigidDisplacement.size())
+        {
+            forAll(pointIDs_, i)
+            {
+                curPoints[pointIDs_[i]] -= zoneRigidDisplacement[i];
+            }
+        }
+
         if (frozenPointsZone_ != -1)
         {
             const pointZone& pz = fvMesh_.pointZones()[frozenPointsZone_];
@@ -436,7 +473,7 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
         // solution from the previous window (~8.6e-10), which becomes the
         // initial guess for the MOVED-MESH Laplacian in the next window and
         // causes overflow due to changed Laplacian coefficients.
-        cellDisplacement_.primitiveFieldRef() = Zero;
+        cellDisplacement_.primitiveFieldRef() = vector::zero;
         cellDisplacement_.correctBoundaryConditions();
 
         return tcurPoints;
@@ -498,6 +535,36 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
         fvOptions(cellDisplacement_)
     );
 
+    if (!moveAllCells_ && cellIDs_.size())
+    {
+        pointField zoneCellCentres0(cellIDs_.size());
+
+        forAll(cellIDs_, i)
+        {
+            zoneCellCentres0[i] = cellCentres0_[cellIDs_[i]];
+        }
+
+        const vectorField rigidCellDisplacement
+        (
+            transformPoints
+            (
+                solidBodyMotionPtr_().transformation(),
+                zoneCellCentres0
+            ) - zoneCellCentres0
+        );
+
+        scalarField& diag = TEqn.diag();
+        vectorField& source = TEqn.source();
+
+        forAll(cellIDs_, i)
+        {
+            const label celli = cellIDs_[i];
+
+            diag[celli] += VGREAT;
+            source[celli] += VGREAT*rigidCellDisplacement[i];
+        }
+    }
+
     // Constrain hole cells to zero displacement by adding a large diagonal
     // contribution.  Interior hole cells (cellMask < holeCellThreshold_) are
     // not on any patch so oversetFvPatchField::manipulateMatrix() does not
@@ -551,6 +618,7 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::updateMesh
     // since pointIDs_ may reference stale indices
     if (mpm.hasMotionPoints())
     {
+        cellCentres0_ = fvMesh_.cellCentres();
         initZoneAndPointIDs();
     }
 }

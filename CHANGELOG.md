@@ -332,3 +332,25 @@ This ensures every checkpoint stores `cellDisplacement_ = 0`.
 **Problem:** Usage of `M_PI` is not fully OpenFOAM-compliant and might rely on non-standard system headers.
 
 **Fix:** Replaced `M_PI` with `Foam::constant::mathematical::pi` and included `mathematicalConstants.H`.
+
+---
+
+#### 10. Fix zonal motion propagation to neighbouring cells
+
+**Files:**
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.H`
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+
+**Problem:** In the zonal overset workflow, the rigid-body transform for the selected
+`cellZone`/`cellSet` was applied directly to zone points, but the Laplacian system did
+not explicitly constrain the corresponding zone cells to the same rigid displacement.
+This could leave an inconsistent transition at the zone boundary and produce abrupt
+deformation of neighbouring cells.
+
+**Fix:**
+1. Store selected zone `cellIDs_` and reference cell centres `cellCentres0_`.
+2. In `solve()`, compute the rigid displacement of selected cell centres and pin those
+   rows in `TEqn` using `VGREAT` diagonal/source contributions.
+3. In `curPoints()`, subtract the rigid component on zone points when composing
+   `newPoints + pointDisplacement_` to avoid double counting rigid motion.
+4. Refresh `cellCentres0_` after topology changes in `updateMesh()`.

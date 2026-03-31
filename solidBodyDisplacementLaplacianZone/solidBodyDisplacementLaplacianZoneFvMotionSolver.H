@@ -150,6 +150,12 @@ class solidBodyDisplacementLaplacianZoneFvMotionSolver
         //- Index of the frozen-points zone (-1 = none)
         label frozenPointsZone_;
 
+        //- Indices of cells belonging to the selected zone
+        labelList cellIDs_;
+
+        //- Reference cell centres for absolute rigid displacement evaluation
+        vectorField cellCentres0_;
+
         //- Indices of points belonging to the selected zone
         labelList pointIDs_;
 
