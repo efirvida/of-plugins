@@ -32,6 +32,32 @@ No submodules are used. All code is self-contained and built with `wmake`.
   - See [precice-openfoam-adapter/README.md](precice-openfoam-adapter/README.md) for original documentation.
   - **Note**: This copy is independent — changes here do **not** automatically sync upstream.
 
+## FSI Motion Model
+
+The `solidBodyDisplacementLaplacianZone` solver implements the correct FSI motion
+model for rotating machinery:
+
+```
+U_total(x) = R(t) · (x + u_fsi(x)) - x
+```
+
+Where:
+- `x` — original point coordinates
+- `u_fsi` — structural deformation from FSI solver (applied via `cellDisplacement` BC)
+- `R(t)` — rigid rotation matrix (from `solidBodyMotionFunction`, e.g. `rotatingMotion`)
+
+**The order of operations is critical:**
+1. **Deform first:** `x' = x + u_fsi` — apply structural deformation
+2. **Rotate second:** `x_final = R(t) · x'` — apply rigid rotation to deformed body
+
+This matches the physical behavior of a rotating blade: the blade deflects under
+aerodynamic loads, then the whole (now-deformed) blade rotates.
+
+The Laplacian diffusion (`div(γ∇U) = 0`) propagates `u_fsi` from the reference
+patch (specified in `inverseDistance(patchName)`) through the rotation zone.
+Cells at the zone boundary are pinned to zero displacement to prevent diffusion
+outside the zone.
+
 ## Requirements
 
 - OpenFOAM (tested with OpenFOAM.com line, v2406–v2506)

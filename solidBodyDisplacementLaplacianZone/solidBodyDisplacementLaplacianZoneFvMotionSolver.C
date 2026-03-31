@@ -183,10 +183,6 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
       ? motionInterpolation::New(fvMesh_, IStringStream(coeffDict().get<word>("interpolation"))())
       : motionInterpolation::New(fvMesh_)
     ),
-    // Defer diffusivity creation to the first call to diffusivity().
-    // Eager construction triggers wallDist → boundary evaluation which
-    // can crash on overset meshes (oversetFvPatchField::initEvaluate
-    // builds the cellCellStencil before the mesh object is fully set up).
     diffusivityPtr_(nullptr),
     frozenPointsZone_
     (
@@ -197,8 +193,8 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
         )
       : -1
     ),
-        cellIDs_(),
-        cellCentres0_(fvMesh_.cellCentres()),
+    cellIDs_(),
+    cellCentres0_(fvMesh_.cellCentres()),
     pointIDs_(),
     moveAllCells_(false)
 {
@@ -293,8 +289,8 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
         )
       : -1
     ),
-        cellIDs_(),
-        cellCentres0_(fvMesh_.cellCentres()),
+    cellIDs_(),
+    cellCentres0_(fvMesh_.cellCentres()),
     pointIDs_(),
     moveAllCells_(false)
 {
@@ -365,58 +361,49 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
     pointDisplacement_.correctBoundaryConditions();
 
-    tmp<pointField> tnewPoints(new pointField(points0()));
+    const pointField& deformedPoints = points0();
+
+    tmp<pointField> tcurPoints(new pointField(points0()));
+    pointField& curPoints = tcurPoints.ref();
 
     if (moveAllCells_)
     {
-        tnewPoints = transformPoints
+        const pointField allDeformed =
+            points0() + pointDisplacement_.primitiveField();
+
+        curPoints = transformPoints
         (
             solidBodyMotionPtr_().transformation(),
-            points0()
+            allDeformed
         );
     }
-    else
-    {
-        pointField& transformedPts = tnewPoints.ref();
-
-        UIndirectList<point>(transformedPts, pointIDs_) = transformPoints
-        (
-            solidBodyMotionPtr_().transformation(),
-            pointField(points0(), pointIDs_)
-        );
-    }
-
-    const pointField& newPoints = tnewPoints();
-
-    pointField zoneRigidDisplacement;
-
-    if (!moveAllCells_ && pointIDs_.size())
+    else if (pointIDs_.size())
     {
         const pointField zonePoints0(points0(), pointIDs_);
+        const pointField zoneDeformation
+        (
+            pointDisplacement_.primitiveField(),
+            pointIDs_
+        );
 
-        zoneRigidDisplacement = transformPoints
+        const pointField zoneDeformed = zonePoints0 + zoneDeformation;
+
+        const pointField zoneRotated = transformPoints
         (
             solidBodyMotionPtr_().transformation(),
-            zonePoints0
-        ) - zonePoints0;
+            zoneDeformed
+        );
+
+        forAll(pointIDs_, i)
+        {
+            curPoints[pointIDs_[i]] = zoneRotated[i];
+        }
     }
 
     if (pointLocation_)
     {
-        pointLocation_().primitiveFieldRef() =
-            newPoints + pointDisplacement_.internalField();
-
+        pointLocation_().primitiveFieldRef() = curPoints;
         pointLocation_().correctBoundaryConditions();
-
-        if (zoneRigidDisplacement.size())
-        {
-            pointField& pointLocation = pointLocation_().primitiveFieldRef();
-
-            forAll(pointIDs_, i)
-            {
-                pointLocation[pointIDs_[i]] -= zoneRigidDisplacement[i];
-            }
-        }
 
         if (frozenPointsZone_ != -1)
         {
@@ -424,55 +411,28 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
             forAll(pz, i)
             {
-                pointLocation_()[pz[i]] = newPoints[pz[i]];
+                pointLocation_()[pz[i]] = points0()[pz[i]];
             }
         }
 
-        // 2D correction: enforce zero displacement in third dimension
-        // for 2D axisymmetric or wedge geometries
         twoDCorrectPoints(pointLocation_().primitiveFieldRef());
 
         return tmp<pointField>(pointLocation_().primitiveField());
     }
     else
     {
-        tmp<pointField> tcurPoints
-        (
-            newPoints + pointDisplacement_.primitiveField()
-        );
-        pointField& curPoints = tcurPoints.ref();
-
-        if (zoneRigidDisplacement.size())
-        {
-            forAll(pointIDs_, i)
-            {
-                curPoints[pointIDs_[i]] -= zoneRigidDisplacement[i];
-            }
-        }
-
         if (frozenPointsZone_ != -1)
         {
             const pointZone& pz = fvMesh_.pointZones()[frozenPointsZone_];
 
             forAll(pz, i)
             {
-                curPoints[pz[i]] = newPoints[pz[i]];
+                curPoints[pz[i]] = points0()[pz[i]];
             }
         }
 
-        // 2D correction: enforce zero displacement in third dimension
-        // for 2D axisymmetric or wedge geometries
         twoDCorrectPoints(curPoints);
 
-        // Reset cellDisplacement_ to zero after the mesh motion has been
-        // applied.  This field is only a scratch variable used inside solve()
-        // to drive the Laplacian; once curPoints() has consumed it, it has no
-        // physical meaning. Zeroing here ensures that the preCICE checkpoint
-        // (written immediately after curPoints() returns) always stores a clean
-        // zero field.  Without this, the checkpoint carries the Laplacian
-        // solution from the previous window (~8.6e-10), which becomes the
-        // initial guess for the MOVED-MESH Laplacian in the next window and
-        // causes overflow due to changed Laplacian coefficients.
         cellDisplacement_.primitiveFieldRef() = vector::zero;
         cellDisplacement_.correctBoundaryConditions();
 
@@ -487,22 +447,12 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     diffusivity().correct();
 
-    // Zero internal field BEFORE updateCoeffs so that the overset patch
-    // interpolation (which reads donor cell values from the internal field)
-    // starts from zero in every time-window iteration.  Without this, the
-    // preCICE checkpoint restore leaves a non-zero internal field at the
-    // start of window 2+, which the overset BC picks up as donor values,
-    // creating a non-trivial initial condition that interacts badly with
-    // the near-singular hole-cell rows in the Laplacian matrix.
     cellDisplacement_.primitiveFieldRef() = vector::zero;
 
     pointDisplacement_.boundaryFieldRef().updateCoeffs();
 
     fv::options& fvOptions(fv::options::New(fvMesh_));
 
-    // On overset meshes use updateCoeffs (not correctBoundaryConditions)
-    // to avoid oversetFvPatchField::initEvaluate triggering mapDistribute
-    // MPI comms that corrupt heap metadata.
     bool hasOversetPatch = false;
     forAll(cellDisplacement_.boundaryField(), patchi)
     {
@@ -537,41 +487,36 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     if (!moveAllCells_ && cellIDs_.size())
     {
-        pointField zoneCellCentres0(cellIDs_.size());
-
-        forAll(cellIDs_, i)
-        {
-            zoneCellCentres0[i] = cellCentres0_[cellIDs_[i]];
-        }
-
-        const vectorField rigidCellDisplacement
-        (
-            transformPoints
-            (
-                solidBodyMotionPtr_().transformation(),
-                zoneCellCentres0
-            ) - zoneCellCentres0
-        );
-
         scalarField& diag = TEqn.diag();
         vectorField& source = TEqn.source();
+
+        labelHashSet zoneCellSet(cellIDs_);
 
         forAll(cellIDs_, i)
         {
             const label celli = cellIDs_[i];
+            const cell& c = fvMesh_.cells()[celli];
 
-            diag[celli] += VGREAT;
-            source[celli] += VGREAT*rigidCellDisplacement[i];
+            bool isOnZoneBoundary = false;
+
+            forAll(c, j)
+            {
+                const label neighborCelli = fvMesh_.cellCells()[celli][j];
+                if (!zoneCellSet.found(neighborCelli))
+                {
+                    isOnZoneBoundary = true;
+                    break;
+                }
+            }
+
+            if (isOnZoneBoundary)
+            {
+                diag[celli] += VGREAT;
+                source[celli] = Zero;
+            }
         }
     }
 
-    // Constrain hole cells to zero displacement by adding a large diagonal
-    // contribution.  Interior hole cells (cellMask < holeCellThreshold_) are
-    // not on any patch so oversetFvPatchField::manipulateMatrix() does not
-    // constrain them.  Their Laplacian diagonal can be near-zero (all
-    // neighbours are also hole cells), causing the Gauss-Seidel smoother to
-    // divide by ~0 and produce overflow.  Pinning them to zero is correct:
-    // the motion field has no physical meaning inside the overset hole region.
     const volScalarField* cellMaskPtr =
         fvMesh_.findObject<volScalarField>("cellMask");
     if (cellMaskPtr)
@@ -590,7 +535,6 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     fvOptions.correct(cellDisplacement_);
 
-    // Post-solve: zero hole cells using cellMask as a safety net.
     if (cellMaskPtr)
     {
         const scalarField& mask = cellMaskPtr->primitiveField();
@@ -601,7 +545,6 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
                 dispRef[celli] = Zero;
         }
     }
-
 }
 
 

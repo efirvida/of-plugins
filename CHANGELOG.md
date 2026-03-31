@@ -2,9 +2,37 @@
 
 ## [Unreleased] — 2026-03-31
 
+### Bug Fixes (FSI Physics)
+
+#### 1. Fix FSI motion: apply deformation BEFORE rotation
+
+**Files:**
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.H`
+
+**Problem:** The previous implementation computed:
+```
+P_final = T(P_0) - (T(P_0) - P_0) + U_lap = P_0 + U_lap
+```
+This cancelled the rigid rotation, effectively ignoring it for the deformation component.
+
+**Physical Model:** For rotor FSI, the correct motion is:
+```
+U_total(x) = R(t)·(x + u_fsi(x)) - x
+```
+where the rotation must be applied AFTER the structural deformation.
+
+**Fix:**
+1. **curPoints():** Now computes `T(P_0 + U_deform)` — first deform, then rotate.
+2. **solve():** Removed rigid displacement pinning. Added zone boundary constraint
+   to prevent deformation diffusion outside the rotation zone.
+3. **Documentation:** Updated class docs with the correct FSI motion equation.
+
+---
+
 ### Code Quality & Maintainability
 
-#### 1. Refactor solidBodyDisplacementLaplacianZone
+#### 2. Refactor solidBodyDisplacementLaplacianZone
 
 **Files:**
 - `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
@@ -25,7 +53,7 @@
 
 ---
 
-#### 2. Fix dynamicOversetZoneDisplacementFvMesh robustness
+#### 3. Fix dynamicOversetZoneDisplacementFvMesh robustness
 
 **Files:**
 - `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.C`
@@ -42,7 +70,7 @@
 
 ---
 
-#### 3. Fix fsiOmega field registration and logging
+#### 4. Fix fsiOmega field registration and logging
 
 **File:** `fsiOmega/preciceOmega.C`
 
@@ -54,7 +82,7 @@
 
 ---
 
-#### 4. Modernize precice-openfoam-adapter memory management
+#### 5. Modernize precice-openfoam-adapter memory management
 
 **Files:**
 - `precice-openfoam-adapter/Adapter.C`, `Adapter.H`
@@ -77,7 +105,7 @@
 
 ---
 
-#### 5. Remove unused FSI modules (Stress, DisplacementDelta)
+#### 6. Remove unused FSI modules (Stress, DisplacementDelta)
 
 **Deleted files:**
 - `precice-openfoam-adapter/FSI/Stress.C`, `Stress.H`
@@ -91,7 +119,7 @@
 
 ---
 
-#### 6. Add AGENTS.md for coding agents
+#### 7. Add AGENTS.md for coding agents
 
 **File:** `AGENTS.md` (new)
 
@@ -108,7 +136,7 @@
 
 ### Bug Fixes (OpenFOAM v2506 compatibility)
 
-#### 1. Replace deprecated `Pstream::scatterList`/`gatherList` with `OPstream`/`IPstream`
+#### 2. Replace deprecated `Pstream::scatterList`/`gatherList` with `OPstream`/`IPstream`
 
 **File:** `precice-openfoam-adapter/Interface.C`
 
@@ -139,7 +167,7 @@ explicit point-to-point communication using `OPstream`/`IPstream` with
 
 ---
 
-#### 2. Prevent MPI deadlock in `fvm::laplacian` with distributed cyclicAMI patches
+#### 3. Prevent MPI deadlock in `fvm::laplacian` with distributed cyclicAMI patches
 
 **File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
 
@@ -161,7 +189,7 @@ ranks before the matrix assembly begins.
 
 ---
 
-#### 3. Prevent SIGSEGV on overset meshes during motion solver init
+#### 4. Prevent SIGSEGV on overset meshes during motion solver init
 
 **Files:**
 - `dynamicOversetZoneDisplacementFvMesh/dynamicOversetZoneDisplacementFvMesh.C`
@@ -194,7 +222,7 @@ always occurs on the same MPI rank for a given mesh decomposition.
 
 ---
 
-#### 4. Prevent heap corruption on overset meshes during motion solve
+#### 5. Prevent heap corruption on overset meshes during motion solve
 
 **Files:**
 - `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
@@ -232,7 +260,7 @@ does not trigger overset field interpolation.
 
 ---
 
-#### 5. Prevent Laplacian singularity on overset hole cells at time-window transitions
+#### 6. Prevent Laplacian singularity on overset hole cells at time-window transitions
 
 **File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
 
@@ -277,7 +305,7 @@ Root cause (two interacting issues):
 
 ---
 
-#### 6. Zero `cellDisplacement_` after mesh motion in `curPoints()`
+#### 7. Zero `cellDisplacement_` after mesh motion in `curPoints()`
 
 **File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
 
@@ -302,7 +330,7 @@ This ensures every checkpoint stores `cellDisplacement_ = 0`.
 
 ---
 
-#### 7. Refactor preCICE adapter MPI logic into template helpers
+#### 8. Refactor preCICE adapter MPI logic into template helpers
 
 **Files:**
 - `precice-openfoam-adapter/Utilities.H`
@@ -314,7 +342,7 @@ This ensures every checkpoint stores `cellDisplacement_ = 0`.
 
 ---
 
-#### 8. Standardize overset wrapper naming
+#### 9. Standardize overset wrapper naming
 
 **Files:**
 - `dynamicOversetZoneDisplacementFvMesh/` (renamed from `dynamicOversetMotionSolverFvMesh/`)
@@ -326,7 +354,7 @@ This ensures every checkpoint stores `cellDisplacement_ = 0`.
 
 ---
 
-#### 9. Modernize mathematical constants in `fsiOmega`
+#### 10. Modernize mathematical constants in `fsiOmega`
 
 **File:** `fsiOmega/preciceOmega.C`
 
@@ -336,7 +364,7 @@ This ensures every checkpoint stores `cellDisplacement_ = 0`.
 
 ---
 
-#### 10. Fix zonal motion propagation to neighbouring cells
+#### 11. Fix zonal motion propagation to neighbouring cells
 
 **Files:**
 - `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.H`
@@ -358,7 +386,7 @@ deformation of neighbouring cells.
 
 ---
 
-#### 11. Fix preCICE adapter build compatibility with OpenFOAM v2506
+#### 12. Fix preCICE adapter build compatibility with OpenFOAM v2506
 
 **Files:**
 - `precice-openfoam-adapter/Interface.C`

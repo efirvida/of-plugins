@@ -32,26 +32,34 @@ Group
 
 Description
     Single motion solver that combines rigid solid-body rotation of a selected
-    mesh zone (cellZone or cellSet) with global Laplacian displacement diffusion.
+    mesh zone (cellZone or cellSet) with FSI deformation propagation via
+    Laplacian diffusion.
 
-    This is the recommended solver for FSI simulations of rotating machinery
-    where rotor blades deform due to fluid-structure interaction. It replaces
-    the brittle pairing of dynamicMultiMotionSolverFvMesh + two separate
-    motion solvers with a single, robust solver.
+    This solver implements the FSI motion model:
 
-    \heading Behaviour
+    \f[
+        U_{total}(x) = R(t) \cdot (x + u_{fsi}(x)) - x
+    \f]
 
-    - Points inside the selected zone are transformed rigidly using the
-      specified solidBodyMotionFunction (e.g. rotatingMotion).
-    - Points outside the zone are smoothly displaced via the Laplacian
-      diffusion equation, producing high-quality mesh deformation.
-    - If no cellZone/cellSet is specified, the rigid transform is applied
-      to the entire mesh (equivalent to solidBodyDisplacementLaplacian).
+    where:
+    - \f$x\f$ are the original point coordinates
+    - \f$u_{fsi}\f$ is the structural deformation (applied on the patch specified
+      in the diffusivity definition, propagated diffusively within the rotation zone)
+    - \f$R(t)\f$ is the rigid rotation transformation from solidBodyMotionFunction
+
+    The deformation and rotation are applied in the correct physical order:
+    1. Apply structural deformation to the diffusivity reference patch
+    2. Propagate deformation diffusively within the rotation zone
+    3. Apply rigid rotation to the entire deformed zone
+
+    For overset meshes, the deformation stays confined to the rotation zone
+    and does NOT propagate to acceptor cells.
 
     \heading Usage in constant/dynamicMeshDict
 
     \verbatim
-    dynamicFvMesh   dynamicMotionSolverFvMesh;
+    dynamicFvMesh   dynamicOversetZoneDisplacementFvMesh;  // for overset
+    // dynamicFvMesh   dynamicMotionSolverFvMesh;           // without overset
 
     motionSolverLibs
     (
@@ -63,20 +71,19 @@ Description
 
     solidBodyDisplacementLaplacianZoneCoeffs
     {
-        // Select the rotating zone (use cellZone OR cellSet, not both)
-        cellZone        rotorZone;
-        // cellSet      rotorCells;   // alternative
+        cellZone        rotorZone;      // Zone that rotates as a rigid body
 
         solidBodyMotionFunction  rotatingMotion;
         rotatingMotionCoeffs
         {
             origin      (0 0 0);
             axis        (0 1 0);
-            omega       158;          // rad/s, or any Function1<scalar>
+            omega       158;            // rad/s, or Function1<scalar>
         }
 
-        // Diffusivity for the Laplacian mesh deformation
-        diffusivity quadratic inverseDistance (rotorTip);
+        // Diffusivity: the patch name in parentheses is the reference patch
+        // where FSI deformation (u_fsi) is applied as fixedValue BC
+        diffusivity quadratic inverseDistance (bladeSurface);
 
         // Optional: fix specific points
         // frozenPointsZone frozenZone;
@@ -85,8 +92,12 @@ Description
 
     \heading FSI / preCICE usage
 
-    When coupled with a structural solver via preCICE + libfsiOmega, replace
-    the fixed omega with a Function1 that reads from the coupling:
+    The structural deformation \f$u_{fsi}\f$ is set on the cellDisplacement field
+    as a fixedValue boundary condition on the diffusivity reference patch.
+    The preCICE adapter (or any other mechanism) updates this field before
+    each mesh update.
+
+    Angular velocity coupling via preCICE:
 
     \verbatim
         omega       preciceOmega;
@@ -99,6 +110,7 @@ Description
 See also
     Foam::solidBodyDisplacementLaplacianFvMotionSolver
     Foam::displacementLaplacianFvMotionSolver
+    Foam::dynamicOversetZoneDisplacementFvMesh
 
 SourceFiles
     solidBodyDisplacementLaplacianZoneFvMotionSolver.C
@@ -135,7 +147,7 @@ class solidBodyDisplacementLaplacianZoneFvMotionSolver
         //- Motion function for rigid transformation
         autoPtr<solidBodyMotionFunction> solidBodyMotionPtr_;
 
-        //- Cell-centre motion field
+        //- Cell-centre motion field (receives u_fsi from FSI solver via BC)
         mutable volVectorField cellDisplacement_;
 
         //- Optional point-position field (position boundary conditions)
