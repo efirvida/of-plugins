@@ -38,6 +38,64 @@
 #define INFO_STR_ADAPTER "---[preciceAdapter] "
 
 #include "IOstreams.H"
+#include "Pstream.H"
+#include "IPstream.H"
+#include "OPstream.H"
+
+namespace preciceAdapter
+{
+
+//- Gathers a single value from all ranks into a List on the master rank.
+template<class T>
+void gather(Foam::List<T>& allRanksValues)
+{
+    if (!Foam::Pstream::parRun()) return;
+
+    if (!Foam::Pstream::master())
+    {
+        Foam::OPstream toMaster(Foam::Pstream::commsTypes::scheduled, Foam::Pstream::masterNo());
+        toMaster << allRanksValues[Foam::Pstream::myProcNo()];
+    }
+    else
+    {
+        for (int p = 1; p < Foam::Pstream::nProcs(); ++p)
+        {
+            Foam::IPstream fromProc(Foam::Pstream::commsTypes::scheduled, p);
+            fromProc >> allRanksValues[p];
+        }
+    }
+}
+
+//- Broadcasts a value from the master rank to all other ranks.
+template<class T>
+void broadcast(T& value)
+{
+    if (!Foam::Pstream::parRun()) return;
+    Foam::Pstream::broadcast(value);
+}
+
+//- Scatters a List of values from the master rank into individual values on each rank.
+template<class T>
+void scatter(Foam::List<T>& allRanksValues)
+{
+    if (!Foam::Pstream::parRun()) return;
+
+    if (Foam::Pstream::master())
+    {
+        for (int p = 1; p < Foam::Pstream::nProcs(); ++p)
+        {
+            Foam::OPstream toProc(Foam::Pstream::commsTypes::scheduled, p);
+            toProc << allRanksValues[p];
+        }
+    }
+    else
+    {
+        Foam::IPstream fromMaster(Foam::Pstream::commsTypes::scheduled, Foam::Pstream::masterNo());
+        fromMaster >> allRanksValues[Foam::Pstream::myProcNo()];
+    }
+}
+
+} // End namespace preciceAdapter
 
 void adapterInfo(const std::string message, const std::string level = "debug");
 

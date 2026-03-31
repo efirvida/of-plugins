@@ -6,8 +6,6 @@
 #include "faceTriangulation.H"
 #include "cellSet.H"
 #include "Pstream.H"
-#include "IPstream.H"
-#include "OPstream.H"
 
 #include <algorithm>
 #include <cmath>
@@ -155,35 +153,9 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
     // -- Step 1: exchange per-rank vertex counts --------------------------------
     rankDataCount_.setSize(Pstream::nProcs(), label(0));
     rankDataCount_[Pstream::myProcNo()] = label(numDataLocations_);
-    // Replace deprecated gatherList+scatterList (broken in v2506) with
-    // explicit point-to-point: ranks send counts to master, master broadcasts back.
-    if (!Pstream::master())
-    {
-        OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-        toMaster << rankDataCount_[Pstream::myProcNo()];
-    }
-    else
-    {
-        for (int p = 1; p < Pstream::nProcs(); ++p)
-        {
-            IPstream fromProc(Pstream::commsTypes::scheduled, p);
-            fromProc >> rankDataCount_[p];
-        }
-    }
-    // Broadcast the full count list from master to all ranks
-    if (Pstream::master())
-    {
-        for (int p = 1; p < Pstream::nProcs(); ++p)
-        {
-            OPstream toProc(Pstream::commsTypes::scheduled, p);
-            toProc << rankDataCount_;
-        }
-    }
-    else
-    {
-        IPstream fromMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-        fromMaster >> rankDataCount_;
-    }
+    // Use helpers to collect counts on master and broadcast back to all
+    preciceAdapter::gather(rankDataCount_);
+    preciceAdapter::broadcast(rankDataCount_);
 
     // -- Step 2: prefix-sum offsets (identical on all ranks) -------------------
     rankDataOffset_.setSize(Pstream::nProcs() + 1, label(0));
@@ -200,20 +172,8 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
             localList[k] = localVertices[k];
         allVerts[Pstream::myProcNo()] = std::move(localList);
     }
-    // Replace deprecated gatherList with explicit point-to-point gather
-    if (!Pstream::master())
-    {
-        OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-        toMaster << allVerts[Pstream::myProcNo()];
-    }
-    else
-    {
-        for (int p = 1; p < Pstream::nProcs(); ++p)
-        {
-            IPstream fromProc(Pstream::commsTypes::scheduled, p);
-            fromProc >> allVerts[p];
-        }
-    }
+    // Use helper to gather coordinates to master rank
+    preciceAdapter::gather(allVerts);
 
     // -- Step 4: rank 0 registers all vertices with preCICE --------------------
     if (Pstream::master())
@@ -247,21 +207,8 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
                 allIDs[p][i] = allVertexIDs_[rankDataOffset_[p] + i];
         }
     }
-    // Replace deprecated scatterList (broken in v2506) with explicit
-    // point-to-point scatter: master sends each rank's vertex IDs.
-    if (Pstream::master())
-    {
-        for (int p = 1; p < Pstream::nProcs(); ++p)
-        {
-            OPstream toProc(Pstream::commsTypes::scheduled, p);
-            toProc << allIDs[p];
-        }
-    }
-    else
-    {
-        IPstream fromMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-        fromMaster >> allIDs[Pstream::myProcNo()];
-    }
+    // Use helper to scatter preCICE vertex IDs back to each rank
+    preciceAdapter::scatter(allIDs);
 
     const List<int>& myIDs = allIDs[Pstream::myProcNo()];
     vertexIDs_.assign(myIDs.begin(), myIDs.end());
@@ -503,20 +450,8 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
                         localList[k] = localAllTriVertIDs[k];
                     allTriIDs[Pstream::myProcNo()] = std::move(localList);
                 }
-                // Replace deprecated gatherList with explicit point-to-point gather
-                if (!Pstream::master())
-                {
-                    OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-                    toMaster << allTriIDs[Pstream::myProcNo()];
-                }
-                else
-                {
-                    for (int p = 1; p < Pstream::nProcs(); ++p)
-                    {
-                        IPstream fromProc(Pstream::commsTypes::scheduled, p);
-                        fromProc >> allTriIDs[p];
-                    }
-                }
+                // Use helper to gather triangle vertex IDs to master rank
+                preciceAdapter::gather(allTriIDs);
                 if (Pstream::master())
                 {
                     std::vector<int> globalTriIDs;
@@ -700,8 +635,7 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
             }
             if (Pstream::parRun())
             {
-                for (std::size_t k = 0; k < nGlobal; ++k)
-                    Pstream::broadcast(dataBuffer_[k]);
+                preciceAdapter::broadcast(dataBuffer_);
             }
             if (Pstream::master() || !Pstream::parRun())
                 fsiDiagLog("READ", couplingDataReader->dataName(),
@@ -743,21 +677,8 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
                     globalData.data(),
                     static_cast<std::size_t>(globalNumDataLocations_), dataDim);
             }
-            // Replace deprecated scatterList (broken in v2506) with explicit
-            // point-to-point scatter: master sends each rank's data slice.
-            if (Pstream::master())
-            {
-                for (int p = 1; p < Pstream::nProcs(); ++p)
-                {
-                    OPstream toProc(Pstream::commsTypes::scheduled, p);
-                    toProc << allBufs[p];
-                }
-            }
-            else
-            {
-                IPstream fromMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-                fromMaster >> allBufs[Pstream::myProcNo()];
-            }
+            // Use helper to scatter global dataset from master to each rank
+            preciceAdapter::scatter(allBufs);
 
             // Copy scattered slice into this rank's dataBuffer_
             const List<double>& myBuf = allBufs[Pstream::myProcNo()];
@@ -810,8 +731,7 @@ void preciceAdapter::Interface::writeCouplingData()
             {
                 std::vector<double> localBuffer(
                     dataBuffer_.begin(), dataBuffer_.begin() + nWrittenData);
-                for (std::size_t k = 0; k < nWrittenData; ++k)
-                    Pstream::broadcast(dataBuffer_[k]);
+                preciceAdapter::broadcast(dataBuffer_);
                 scalar maxDiff = 0.0;
                 for (std::size_t k = 0; k < nWrittenData; ++k)
                     maxDiff = max(maxDiff, mag(localBuffer[k] - dataBuffer_[k]));
@@ -855,20 +775,8 @@ void preciceAdapter::Interface::writeCouplingData()
                     localList[k] = dataBuffer_[k];
                 allBufs[Pstream::myProcNo()] = std::move(localList);
             }
-            // Replace deprecated gatherList with explicit point-to-point gather
-            if (!Pstream::master())
-            {
-                OPstream toMaster(Pstream::commsTypes::scheduled, Pstream::masterNo());
-                toMaster << allBufs[Pstream::myProcNo()];
-            }
-            else
-            {
-                for (int p = 1; p < Pstream::nProcs(); ++p)
-                {
-                    IPstream fromProc(Pstream::commsTypes::scheduled, p);
-                    fromProc >> allBufs[p];
-                }
-            }
+            // Use helper to gather local data buffers to master rank
+            preciceAdapter::gather(allBufs);
 
             if (Pstream::master())
             {
