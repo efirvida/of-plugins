@@ -165,7 +165,8 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
 
     // -- Step 3: gather local coordinates to rank 0 ----------------------------
     List<List<double>> allVerts(Pstream::nProcs());
-    allVerts[Pstream::myProcNo()] = localVertices;
+    allVerts[Pstream::myProcNo()] =
+        Foam::List<double>(localVertices.begin(), localVertices.end());
     // Use helper to gather coordinates to master rank
     preciceAdapter::gather(allVerts);
 
@@ -381,7 +382,7 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
         // then scatter the globally-assigned IDs back to each rank's vertexIDs_.
         gatherRegisterScatterIDs(vertices);
 
-        if (meshConnectivity)
+        if (meshConnectivity_)
         {
             // Rebuild verticesMap using the globally-assigned preCICE vertex IDs
             // (scattered back to this rank by gatherRegisterScatterIDs).
@@ -436,7 +437,8 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
             if (Pstream::parRun())
             {
                 List<List<int>> allTriIDs(Pstream::nProcs());
-                allTriIDs[Pstream::myProcNo()] = localAllTriVertIDs;
+                allTriIDs[Pstream::myProcNo()] =
+                    Foam::List<int>(localAllTriVertIDs.begin(), localAllTriVertIDs.end());
                 // Use helper to gather triangle vertex IDs to master rank
                 preciceAdapter::gather(allTriIDs);
                 if (Pstream::master())
@@ -606,7 +608,7 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
 {
     for (uint i = 0; i < couplingDataReaders_.size(); i++)
     {
-        preciceAdapter::CouplingDataUser* couplingDataReader = couplingDataReaders_.at(i);
+        preciceAdapter::CouplingDataUser* couplingDataReader = couplingDataReaders_.at(i).get();
         const int dataDim =
             static_cast<int>(precice_.getDataDimensions(meshName_, couplingDataReader->dataName()));
 
@@ -704,7 +706,7 @@ void preciceAdapter::Interface::writeCouplingData()
 {
     for (uint i = 0; i < couplingDataWriters_.size(); i++)
     {
-        preciceAdapter::CouplingDataUser* couplingDataWriter = couplingDataWriters_.at(i);
+        preciceAdapter::CouplingDataUser* couplingDataWriter = couplingDataWriters_.at(i).get();
         const int dataDim =
             static_cast<int>(precice_.getDataDimensions(meshName_, couplingDataWriter->dataName()));
 
@@ -755,7 +757,8 @@ void preciceAdapter::Interface::writeCouplingData()
             couplingDataWriter->applyFlipNormal(localSpan);
 
             List<List<double>> allBufs(Pstream::nProcs());
-            allBufs[Pstream::myProcNo()] = dataBuffer_;
+            allBufs[Pstream::myProcNo()] =
+                Foam::List<double>(dataBuffer_.begin(), dataBuffer_.end());
             // Use helper to gather local data buffers to master rank
             preciceAdapter::gather(allBufs);
 
