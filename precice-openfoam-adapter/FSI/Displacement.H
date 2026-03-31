@@ -1,6 +1,8 @@
 #ifndef FSI_DISPLACEMENT_H
 #define FSI_DISPLACEMENT_H
 
+#include <memory>
+
 #include "CouplingDataUser.H"
 
 #include "fvCFD.H"
@@ -24,9 +26,7 @@ private:
     Foam::volVectorField* cellDisplacement_;
 
     const Foam::fvMesh& mesh_;
-    // NOTE: this allocation could be avoided in case we directly write to the
-    // Needs to be a pointer since the class disables assignment and copy constructors
-    std::vector<const Foam::primitivePatchInterpolation*> interpolationObjects_;
+    std::vector<std::unique_ptr<const Foam::primitivePatchInterpolation>> interpolationObjects_;
 
 public:
     //- Constructor
@@ -49,6 +49,9 @@ public:
     //- We need to initialize the cell-based vector and the interpolation object
     // in case we want to use the faceCenter location for the coupling
     void initialize() final;
+
+    //- Destructor
+    ~Displacement();
 };
 
 }

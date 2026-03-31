@@ -55,10 +55,10 @@ using namespace Foam;
 preciceAdapter::Interface::Interface(
     precice::Participant& precice,
     const fvMesh& mesh,
-    std::string meshName,
-    std::string locationsType,
-    std::vector<std::string> patchNames,
-    std::vector<std::string> cellSetNames,
+    const std::string& meshName,
+    const std::string& locationsType,
+    const std::vector<std::string>& patchNames,
+    const std::vector<std::string>& cellSetNames,
     bool meshConnectivity,
     bool restartFromDeformed,
     const std::string& namePointDisplacement,
@@ -72,7 +72,7 @@ preciceAdapter::Interface::Interface(
 {
     dim_ = precice_.getMeshDimensions(meshName);
 
-    if (dim_ == 2 && meshConnectivity_ == true)
+    if (dim_ == 2 && meshConnectivity_)
     {
         DEBUG(adapterInfo("meshConnectivity is currently only supported for 3D cases. \n"
                           "You might set up a 3D case and restrict the 3rd dimension by z-dead = true. \n"
@@ -165,13 +165,7 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
 
     // -- Step 3: gather local coordinates to rank 0 ----------------------------
     List<List<double>> allVerts(Pstream::nProcs());
-    {
-        const label _nVerts = static_cast<label>(localVertices.size());
-        List<double> localList(_nVerts);
-        for (label k = 0; k < _nVerts; ++k)
-            localList[k] = localVertices[k];
-        allVerts[Pstream::myProcNo()] = std::move(localList);
-    }
+    allVerts[Pstream::myProcNo()] = localVertices;
     // Use helper to gather coordinates to master rank
     preciceAdapter::gather(allVerts);
 
@@ -183,8 +177,7 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
             static_cast<std::size_t>(dim_) *
             static_cast<std::size_t>(globalNumDataLocations_));
         for (int p = 0; p < Pstream::nProcs(); ++p)
-            for (double d : allVerts[p])
-                globalVerts.push_back(d);
+            globalVerts.insert(globalVerts.end(), allVerts[p].begin(), allVerts[p].end());
 
         allVertexIDs_.resize(static_cast<std::size_t>(globalNumDataLocations_));
         precice_.setMeshVertices(meshName_, globalVerts, allVertexIDs_);
@@ -388,7 +381,7 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
         // then scatter the globally-assigned IDs back to each rank's vertexIDs_.
         gatherRegisterScatterIDs(vertices);
 
-        if (meshConnectivity_)
+        if (meshConnectivity)
         {
             // Rebuild verticesMap using the globally-assigned preCICE vertex IDs
             // (scattered back to this rank by gatherRegisterScatterIDs).
@@ -443,21 +436,14 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
             if (Pstream::parRun())
             {
                 List<List<int>> allTriIDs(Pstream::nProcs());
-                {
-                    const label _nTri = static_cast<label>(localAllTriVertIDs.size());
-                    List<int> localList(_nTri);
-                    for (label k = 0; k < _nTri; ++k)
-                        localList[k] = localAllTriVertIDs[k];
-                    allTriIDs[Pstream::myProcNo()] = std::move(localList);
-                }
+            allTriIDs[Pstream::myProcNo()] = localAllTriVertIDs;
                 // Use helper to gather triangle vertex IDs to master rank
                 preciceAdapter::gather(allTriIDs);
                 if (Pstream::master())
                 {
                     std::vector<int> globalTriIDs;
                     for (int p = 0; p < Pstream::nProcs(); ++p)
-                        for (int id : allTriIDs[p])
-                            globalTriIDs.push_back(id);
+                        globalTriIDs.insert(globalTriIDs.end(), allTriIDs[p].begin(), allTriIDs[p].end());
                     if (!globalTriIDs.empty())
                         precice_.setMeshTriangles(meshName_, globalTriIDs);
                 }
@@ -504,15 +490,16 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
 
         if (!cellSetNames_.empty())
         {
+            const vectorField& cellCenters = mesh.C().internalField();
             for (uint j = 0; j < cellSetNames_.size(); j++)
             {
                 const labelList& cells = overlapCells.at(j);
-                for (int i = 0; i < cells.size(); i++)
+                for (const label celli : cells)
                 {
-                    vertices[verticesIndex++] = mesh.C().internalField()[cells[i]].x();
-                    vertices[verticesIndex++] = mesh.C().internalField()[cells[i]].y();
+                    vertices[verticesIndex++] = cellCenters[celli].x();
+                    vertices[verticesIndex++] = cellCenters[celli].y();
                     if (dim_ == 3)
-                        vertices[verticesIndex++] = mesh.C().internalField()[cells[i]].z();
+                        vertices[verticesIndex++] = cellCenters[celli].z();
                 }
             }
         }
@@ -571,7 +558,7 @@ void preciceAdapter::Interface::addCouplingDataWriter(
     couplingDataWriter->setLocationsType(locationType_);
     couplingDataWriter->checkDataLocation(meshConnectivity_);
     couplingDataWriter->initialize();
-    couplingDataWriters_.push_back(couplingDataWriter);
+    couplingDataWriters_.emplace_back(couplingDataWriter);
 }
 
 
@@ -586,7 +573,7 @@ void preciceAdapter::Interface::addCouplingDataReader(
     couplingDataReader->setCellSetNames(cellSetNames_);
     couplingDataReader->checkDataLocation(meshConnectivity_);
     couplingDataReader->initialize();
-    couplingDataReaders_.push_back(couplingDataReader);
+    couplingDataReaders_.emplace_back(couplingDataReader);
 }
 
 void preciceAdapter::Interface::createBuffer()
@@ -768,13 +755,7 @@ void preciceAdapter::Interface::writeCouplingData()
             couplingDataWriter->applyFlipNormal(localSpan);
 
             List<List<double>> allBufs(Pstream::nProcs());
-            {
-                const label _nCopy = static_cast<label>(nLocalWrite);
-                List<double> localList(_nCopy);
-                for (label k = 0; k < _nCopy; ++k)
-                    localList[k] = dataBuffer_[k];
-                allBufs[Pstream::myProcNo()] = std::move(localList);
-            }
+            allBufs[Pstream::myProcNo()] = dataBuffer_;
             // Use helper to gather local data buffers to master rank
             preciceAdapter::gather(allBufs);
 
@@ -785,8 +766,7 @@ void preciceAdapter::Interface::writeCouplingData()
                     static_cast<std::size_t>(globalNumDataLocations_) *
                     static_cast<std::size_t>(dataDim));
                 for (int p = 0; p < Pstream::nProcs(); ++p)
-                    for (double v : allBufs[p])
-                        globalData.push_back(v);
+                    globalData.insert(globalData.end(), allBufs[p].begin(), allBufs[p].end());
 
                 fsiDiagLog("WRITE", couplingDataWriter->dataName(),
                     globalData.data(),
@@ -814,23 +794,14 @@ void preciceAdapter::Interface::writeCouplingData()
     }
 }
 
-preciceAdapter::Interface::~Interface()
-{
-    for (uint i = 0; i < couplingDataReaders_.size(); i++)
-        delete couplingDataReaders_.at(i);
-    couplingDataReaders_.clear();
-
-    for (uint i = 0; i < couplingDataWriters_.size(); i++)
-        delete couplingDataWriters_.at(i);
-    couplingDataWriters_.clear();
-}
+preciceAdapter::Interface::~Interface() = default;
 
 preciceAdapter::LocationType preciceAdapter::Interface::locationType() const
 {
     return locationType_;
 }
 
-unsigned int preciceAdapter::Interface::dataDimensions(const std::string& dataName) const
+unsigned int preciceAdapter::Interface::dataDimensions(const std::string& dataName) const noexcept
 {
     return precice_.getDataDimensions(meshName_, dataName);
 }

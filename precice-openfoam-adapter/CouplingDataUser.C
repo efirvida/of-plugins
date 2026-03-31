@@ -14,12 +14,12 @@ bool preciceAdapter::CouplingDataUser::hasVectorData()
     return dataType_ == vector;
 }
 
-void preciceAdapter::CouplingDataUser::setDataName(std::string dataName)
+void preciceAdapter::CouplingDataUser::setDataName(const std::string& dataName)
 {
-    dataName_ = std::move(dataName);
+    dataName_ = dataName;
 }
 
-const std::string& preciceAdapter::CouplingDataUser::dataName()
+const std::string& preciceAdapter::CouplingDataUser::dataName() const noexcept
 {
     return dataName_;
 }
@@ -40,12 +40,12 @@ void preciceAdapter::CouplingDataUser::applyFlipNormal(precice::span<double> dat
     }
 }
 
-void preciceAdapter::CouplingDataUser::setPatchIDs(std::vector<int> patchIDs)
+void preciceAdapter::CouplingDataUser::setPatchIDs(const std::vector<int>& patchIDs)
 {
     patchIDs_ = patchIDs;
 }
 
-void preciceAdapter::CouplingDataUser::setCellSetNames(std::vector<std::string> cellSetNames)
+void preciceAdapter::CouplingDataUser::setCellSetNames(const std::vector<std::string>& cellSetNames)
 {
     cellSetNames_ = cellSetNames;
 }

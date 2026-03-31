@@ -2,6 +2,4 @@
 #include "FSI.C"
 #include "ForceBase.C"
 #include "Force.C"
-#include "Stress.C"
 #include "Displacement.C"
-#include "DisplacementDelta.C"

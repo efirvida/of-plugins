@@ -144,27 +144,12 @@ bool preciceAdapter::FSI::FluidStructureInteraction::addWriters(const preciceAda
         );
         DEBUG(adapterInfo("Added writer: Force."));
     }
-    else if (matchingStrings(dataName, "DisplacementDelta"))
-    {
-        interface->addCouplingDataWriter(
-            fieldConfig,
-            new DisplacementDelta(mesh_, namePointDisplacement_, nameCellDisplacement_));
-        DEBUG(adapterInfo("Added writer: DisplacementDelta."));
-    }
     else if (matchingStrings(dataName, "Displacement"))
     {
         interface->addCouplingDataWriter(
             fieldConfig,
             new Displacement(mesh_, namePointDisplacement_, nameCellDisplacement_));
         DEBUG(adapterInfo("Added writer: Displacement."));
-    }
-    else if (matchingStrings(dataName, "Stress"))
-    {
-        interface->addCouplingDataWriter(
-            fieldConfig,
-            new Stress(mesh_, solverType_) /* TODO: Add any other arguments here */
-        );
-        DEBUG(adapterInfo("Added writer: Stress."));
     }
     else
     {
@@ -194,27 +179,12 @@ bool preciceAdapter::FSI::FluidStructureInteraction::addReaders(const preciceAda
         );
         DEBUG(adapterInfo("Added reader: Force."));
     }
-    else if (matchingStrings(dataName, "DisplacementDelta"))
-    {
-        interface->addCouplingDataReader(
-            fieldConfig,
-            new DisplacementDelta(mesh_, namePointDisplacement_, nameCellDisplacement_));
-        DEBUG(adapterInfo("Added reader: DisplacementDelta."));
-    }
     else if (matchingStrings(dataName, "Displacement"))
     {
         interface->addCouplingDataReader(
             fieldConfig,
             new Displacement(mesh_, namePointDisplacement_, nameCellDisplacement_));
         DEBUG(adapterInfo("Added reader: Displacement."));
-    }
-    else if (matchingStrings(dataName, "Stress"))
-    {
-        interface->addCouplingDataReader(
-            fieldConfig,
-            new Stress(mesh_, solverType_) /* TODO: Add any other arguments here */
-        );
-        DEBUG(adapterInfo("Added reader: Stress."));
     }
     else
     {

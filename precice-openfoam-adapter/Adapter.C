@@ -804,9 +804,8 @@ void preciceAdapter::Adapter::storeMeshPoints()
     if (!meshPoints_)
     {
         DEBUG(adapterInfo("Storing mesh points..."));
-        // Add points and oldPoints
-        meshPoints_ = new Foam::pointField(mesh_.points());
-        meshOldPoints_ = new Foam::pointField(mesh_.oldPoints());
+        meshPoints_ = std::make_unique<Foam::pointField>(mesh_.points());
+        meshOldPoints_ = std::make_unique<Foam::pointField>(mesh_.oldPoints());
     }
 
     if (mesh_.moving())
@@ -829,11 +828,8 @@ void preciceAdapter::Adapter::reloadMeshPoints()
         return;
     }
 
-    // Reload mesh points
     const_cast<Foam::fvMesh&>(mesh_).movePoints(*meshPoints_);
 
-    // polyMesh.movePoints will only update oldPoints
-    // if (curMotionTimeIndex_ != time().timeIndex())
     const_cast<pointField&>(mesh_.oldPoints()) = *meshOldPoints_;
 
     readMeshCheckpoint();

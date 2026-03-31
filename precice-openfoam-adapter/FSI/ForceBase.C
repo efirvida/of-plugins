@@ -188,7 +188,6 @@ void preciceAdapter::FSI::ForceBase::readFromBuffer(double* buffer) const
      * the outer for the locations and the inner for the dimensions.
      * Since the Force class already implements a read method,
      * this only corresponds to stresses.
-     * In general, consider refactoring the ForceBase, Force, and Stress classes.
      */
     adapterInfo("Reading stresses is not supported.", "error");
 }

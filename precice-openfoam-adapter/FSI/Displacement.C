@@ -23,17 +23,17 @@ preciceAdapter::FSI::Displacement::Displacement(
 // defined later. Hence, we call this method after the CouplingDaaUser has been configured
 void preciceAdapter::FSI::Displacement::initialize()
 {
-    // Initialize appropriate objects for each interface patch, namely the volField and the interpolation object
-    // this is only necessary for face based FSI
     if (this->locationType_ == LocationType::faceCenters)
     {
         for (unsigned int j = 0; j < patchIDs_.size(); ++j)
         {
             const unsigned int patchID = patchIDs_.at(j);
-            interpolationObjects_.emplace_back(new primitivePatchInterpolation(mesh_.boundaryMesh()[patchID]));
+            interpolationObjects_.emplace_back(std::make_unique<primitivePatchInterpolation>(mesh_.boundaryMesh()[patchID]));
         }
     }
 }
+
+preciceAdapter::FSI::Displacement::~Displacement() = default;
 
 
 std::size_t preciceAdapter::FSI::Displacement::write(double* buffer, bool meshConnectivity, const unsigned int dim)

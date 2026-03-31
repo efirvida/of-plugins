@@ -58,10 +58,10 @@ public:
     bool hasVectorData();
 
     //- Set the data name
-    void setDataName(std::string dataName);
+    void setDataName(const std::string& dataName);
 
     //- Get the data name
-    const std::string& dataName();
+    const std::string& dataName() const noexcept;
 
     //- Set flip normal option
     void setFlipNormal(bool flipNormal);
@@ -70,10 +70,10 @@ public:
     void applyFlipNormal(precice::span<double> dataBuffer);
 
     //- Set the patch IDs that form the interface
-    void setPatchIDs(std::vector<int> patchIDs);
+    void setPatchIDs(const std::vector<int>& patchIDs);
 
     //- Set the cellSetNames that form the overlapping cells of the interface
-    void setCellSetNames(std::vector<std::string> cellSetNames);
+    void setCellSetNames(const std::vector<std::string>& cellSetNames);
 
     //- Set the locations type of the interface
     void setLocationsType(LocationType locationsType);

@@ -1,6 +1,7 @@
 #ifndef INTERFACE_H
 #define INTERFACE_H
 
+#include <memory>
 #include <string>
 #include <vector>
 #include "fvCFD.H"
@@ -69,10 +70,10 @@ protected:
     std::vector<double> dataBuffer_;
 
     //- Vector of CouplingDataReaders
-    std::vector<CouplingDataUser*> couplingDataReaders_;
+    std::vector<std::unique_ptr<CouplingDataUser>> couplingDataReaders_;
 
     //- Vector of CouplingDataWriters
-    std::vector<CouplingDataUser*> couplingDataWriters_;
+    std::vector<std::unique_ptr<CouplingDataUser>> couplingDataWriters_;
 
     //Switch for faceTriangulation (nearest projection)
     bool meshConnectivity_;
@@ -99,10 +100,10 @@ public:
     Interface(
         precice::Participant& precice,
         const Foam::fvMesh& mesh,
-        std::string meshName,
-        std::string locationsType,
-        std::vector<std::string> patchNames,
-        std::vector<std::string> cellSetNames,
+        const std::string& meshName,
+        const std::string& locationsType,
+        const std::vector<std::string>& patchNames,
+        const std::vector<std::string>& cellSetNames,
         bool meshConnectivity,
         bool restartFromDeformed,
         const std::string& namePointDisplacement,
@@ -136,7 +137,7 @@ public:
     LocationType locationType() const;
 
     //- Return the preCICE data dimensions for a configured data set
-    unsigned int dataDimensions(const std::string& dataName) const;
+    unsigned int dataDimensions(const std::string& dataName) const noexcept;
 
     //- Destructor
     ~Interface();
