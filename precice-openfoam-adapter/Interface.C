@@ -165,8 +165,9 @@ void preciceAdapter::Interface::gatherRegisterScatterIDs(
 
     // -- Step 3: gather local coordinates to rank 0 ----------------------------
     List<List<double>> allVerts(Pstream::nProcs());
-    allVerts[Pstream::myProcNo()] =
-        Foam::List<double>(localVertices.begin(), localVertices.end());
+    allVerts[Pstream::myProcNo()].setSize(localVertices.size());
+    for (std::size_t i = 0; i < localVertices.size(); ++i)
+        allVerts[Pstream::myProcNo()][i] = localVertices[i];
     // Use helper to gather coordinates to master rank
     preciceAdapter::gather(allVerts);
 
@@ -437,8 +438,9 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
             if (Pstream::parRun())
             {
                 List<List<int>> allTriIDs(Pstream::nProcs());
-                allTriIDs[Pstream::myProcNo()] =
-                    Foam::List<int>(localAllTriVertIDs.begin(), localAllTriVertIDs.end());
+                allTriIDs[Pstream::myProcNo()].setSize(localAllTriVertIDs.size());
+                for (std::size_t i = 0; i < localAllTriVertIDs.size(); ++i)
+                    allTriIDs[Pstream::myProcNo()][i] = localAllTriVertIDs[i];
                 // Use helper to gather triangle vertex IDs to master rank
                 preciceAdapter::gather(allTriIDs);
                 if (Pstream::master())
@@ -624,7 +626,12 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
             }
             if (Pstream::parRun())
             {
-                preciceAdapter::broadcast(dataBuffer_);
+                Foam::List<double> sharedData(nGlobal);
+                for (std::size_t k = 0; k < nGlobal; ++k)
+                    sharedData[k] = dataBuffer_[k];
+                preciceAdapter::broadcast(sharedData);
+                for (std::size_t k = 0; k < nGlobal; ++k)
+                    dataBuffer_[k] = sharedData[k];
             }
             if (Pstream::master() || !Pstream::parRun())
                 fsiDiagLog("READ", couplingDataReader->dataName(),
@@ -720,7 +727,12 @@ void preciceAdapter::Interface::writeCouplingData()
             {
                 std::vector<double> localBuffer(
                     dataBuffer_.begin(), dataBuffer_.begin() + nWrittenData);
-                preciceAdapter::broadcast(dataBuffer_);
+                Foam::List<double> sharedData(nWrittenData);
+                for (std::size_t k = 0; k < nWrittenData; ++k)
+                    sharedData[k] = dataBuffer_[k];
+                preciceAdapter::broadcast(sharedData);
+                for (std::size_t k = 0; k < nWrittenData; ++k)
+                    dataBuffer_[k] = sharedData[k];
                 scalar maxDiff = 0.0;
                 for (std::size_t k = 0; k < nWrittenData; ++k)
                     maxDiff = max(maxDiff, mag(localBuffer[k] - dataBuffer_[k]));
@@ -757,8 +769,9 @@ void preciceAdapter::Interface::writeCouplingData()
             couplingDataWriter->applyFlipNormal(localSpan);
 
             List<List<double>> allBufs(Pstream::nProcs());
-            allBufs[Pstream::myProcNo()] =
-                Foam::List<double>(dataBuffer_.begin(), dataBuffer_.end());
+            allBufs[Pstream::myProcNo()].setSize(dataBuffer_.size());
+            for (std::size_t i = 0; i < dataBuffer_.size(); ++i)
+                allBufs[Pstream::myProcNo()][i] = dataBuffer_[i];
             // Use helper to gather local data buffers to master rank
             preciceAdapter::gather(allBufs);
 

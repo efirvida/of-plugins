@@ -238,6 +238,7 @@ does not trigger overset field interpolation.
 
 **Problem:** Starting from time-window 2, the `smoothSolver` for the
 `cellDisplacement_` Laplacian produced overflow values (~1.7e+16) in a
+
 single iteration, despite starting from a zeroed internal field.
 
 Root cause (two interacting issues):
@@ -354,3 +355,30 @@ deformation of neighbouring cells.
 3. In `curPoints()`, subtract the rigid component on zone points when composing
    `newPoints + pointDisplacement_` to avoid double counting rigid motion.
 4. Refresh `cellCentres0_` after topology changes in `updateMesh()`.
+
+---
+
+#### 11. Fix preCICE adapter build compatibility with OpenFOAM v2506
+
+**Files:**
+- `precice-openfoam-adapter/Interface.C`
+- `precice-openfoam-adapter/Utilities.C`
+
+**Problem:** The adapter failed to compile on OpenFOAM v2506 due to two API
+compatibility issues introduced by MPI/data-container changes:
+
+1. `Foam::List` construction from STL iterators used unsupported/private
+   constructors.
+2. `Pstream::broadcast` was called with `std::vector<double>`, which has no
+   OpenFOAM stream operators.
+
+Additionally, `wmkdepend` reported a parse warning in `Utilities.C` because
+the file ended without a trailing newline.
+
+**Fix:**
+1. Replaced iterator-based `Foam::List` construction with explicit
+   `setSize()` + element copy loops for rank-local gather/scatter buffers.
+2. Reworked global-data broadcast paths to use temporary `Foam::List<double>`
+   containers for MPI serialization and copied data back to `std::vector`.
+3. Added trailing newline in `Utilities.C` to silence `wmkdepend` parse
+   warnings.
