@@ -436,7 +436,7 @@ void preciceAdapter::Interface::configureMesh(const fvMesh& mesh, const std::str
             if (Pstream::parRun())
             {
                 List<List<int>> allTriIDs(Pstream::nProcs());
-            allTriIDs[Pstream::myProcNo()] = localAllTriVertIDs;
+                allTriIDs[Pstream::myProcNo()] = localAllTriVertIDs;
                 // Use helper to gather triangle vertex IDs to master rank
                 preciceAdapter::gather(allTriIDs);
                 if (Pstream::master())
