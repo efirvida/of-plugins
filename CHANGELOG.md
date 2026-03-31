@@ -2,6 +2,44 @@
 
 ## [Unreleased] — 2026-03-31
 
+### New Features
+
+#### 1. Add `boundaryDecay` motionDiffusivity manipulator for AMI meshes
+
+**Files:**
+- `solidBodyDisplacementLaplacianZone/boundaryDecayDiffusivity.H` (new)
+- `solidBodyDisplacementLaplacianZone/boundaryDecayDiffusivity.C` (new)
+- `solidBodyDisplacementLaplacianZone/Make/files` (updated)
+
+**Problem:** When using `solidBodyDisplacementLaplacianZone` with AMI
+(Arbitrary Mesh Interface) meshes, non-linear diffusivity functions
+(e.g. `quadratic inverseDistance`) propagate mesh deformation all the way
+to the AMI boundary.  Because the diffusivity is non-linear, adjacent
+cells on opposite sides of the AMI interface deform by different
+magnitudes, breaking interface connectivity.
+
+**Solution:** New `motionDiffusivity` manipulator that multiplies any base
+diffusivity by a smooth decay factor that transitions from 0 at the
+selected boundary patches to 1 at a user-specified distance.  This
+guarantees zero diffusivity — and therefore zero mesh deformation — at
+the AMI interface.
+
+The decay function is a Hermite smooth-step: `f(xi) = 3*xi^2 - 2*xi^3`,
+where `xi = min(d / decayDistance, 1)` and `d` is the cell distance to
+the nearest selected patch (computed via `patchWave` / meshWave).
+
+**Usage:**
+```
+diffusivity boundaryDecay 0.05 (AMI.*) quadratic inverseDistance (blade);
+```
+
+Where:
+- `0.05` — decay distance (metres): distance from AMI where D ramps 0 → 1
+- `(AMI.*)` — patch name regex matching the AMI boundaries
+- `quadratic inverseDistance (blade)` — any existing motionDiffusivity chain
+
+---
+
 ### Bug Fixes (FSI Physics)
 
 #### 1. Fix FSI motion: apply deformation BEFORE rotation

@@ -1,3 +1,4 @@
 solidBodyDisplacementLaplacianZoneFvMotionSolver.C
+boundaryDecayDiffusivity.C
 
 LIB = $(FOAM_USER_LIBBIN)/libsolidBodyDisplacementLaplacianZoneFvMotionSolver

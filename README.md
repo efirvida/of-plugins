@@ -53,10 +53,39 @@ Where:
 This matches the physical behavior of a rotating blade: the blade deflects under
 aerodynamic loads, then the whole (now-deformed) blade rotates.
 
-The Laplacian diffusion (`div(γ∇U) = 0`) propagates `u_fsi` from the reference
+The Laplacian diffusion (`div(gamma nabla U) = 0`) propagates `u_fsi` from the reference
 patch (specified in `inverseDistance(patchName)`) through the rotation zone.
 Cells at the zone boundary are pinned to zero displacement to prevent diffusion
 outside the zone.
+
+### AMI boundary protection: `boundaryDecay` diffusivity
+
+When using AMI (Arbitrary Mesh Interface) meshes, non-linear diffusivity
+functions can propagate deformation to the AMI boundary, breaking interface
+connectivity. The `boundaryDecay` manipulator prevents this by smoothly
+decaying the diffusivity to zero near selected patches.
+
+```
+patch AMI        decayDistance          interior
+   |                 |
+   |  D=0  --smooth--  D=D_base
+   |                 |
+```
+
+Use it by wrapping your existing diffusivity chain:
+
+```c++
+diffusivity  boundaryDecay 0.05 (AMI.*) quadratic inverseDistance (blade);
+```
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| decayDistance | `0.05` | Distance (m) from AMI where D ramps 0 to 1 |
+| patchNames | `(AMI.*)` | Regex matching AMI boundary patches |
+| baseDiffusivity | `quadratic inverseDistance (blade)` | Any existing motionDiffusivity chain |
+
+The decay factor uses a Hermite smooth-step (`3x^2 - 2x^3`) to ensure C1
+continuity at both ends of the transition.
 
 ## Requirements
 
@@ -135,6 +164,9 @@ solidBodyDisplacementLaplacianZoneCoeffs
     }
 
     diffusivity quadratic inverseDistance (rotorTip);
+
+    // For AMI meshes, wrap with boundaryDecay to protect the interface:
+    // diffusivity boundaryDecay 0.05 (AMI.*) quadratic inverseDistance (rotorTip);
 }
 ```
 
