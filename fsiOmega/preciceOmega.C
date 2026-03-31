@@ -29,6 +29,7 @@ License
 #include "preciceOmega.H"
 #include "addToRunTimeSelectionTable.H"
 #include "Time.H"
+#include "mathematicalConstants.H"
 
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
@@ -165,7 +166,7 @@ Foam::scalar Foam::Function1Types::preciceOmega::value(const scalar t) const
     initField();
     
     const scalar omega = omegaField_->value();
-    const scalar rpm = omega * 60.0 / (2.0 * M_PI);
+    const scalar rpm = omega * 60.0 / (2.0 * constant::mathematical::pi);
 
     Info<< "preciceOmega::value(t=" << t << ")"
         << " omega=" << omega << " [rad/s]"
@@ -184,7 +185,7 @@ Foam::scalar Foam::Function1Types::preciceOmega::integrate
     initField();
     
     const scalar omega = omegaField_->value();
-    const scalar rpm = omega * 60.0 / (2.0 * M_PI);
+    const scalar rpm = omega * 60.0 / (2.0 * constant::mathematical::pi);
     const scalar integral = omega * (t2 - t1);
     
     Info<< "preciceOmega::integrate(t1=" << t1 << ", t2=" << t2 << ")" << nl
