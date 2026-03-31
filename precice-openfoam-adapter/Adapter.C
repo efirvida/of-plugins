@@ -600,6 +600,11 @@ void preciceAdapter::Adapter::initialize()
 
     precice_->initialize();
     preciceInitialized_ = true;
+
+    // Read initial coupling data (e.g. AngularVelocity with initialize="true")
+    // so that fields are populated before the first mesh motion step.
+    readCouplingData(runTime_.deltaT().value());
+
     ACCUMULATE_TIMER(timeInInitialize_);
 
     adapterInfo("preCICE was configured and initialized", "info");
