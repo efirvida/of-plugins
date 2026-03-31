@@ -29,6 +29,7 @@ License
 
 #include "motionInterpolation.H"
 #include "motionDiffusivity.H"
+#include "IStringStream.H"
 #include "fvmLaplacian.H"
 #include "addToRunTimeSelectionTable.H"
 #include "mapPolyMesh.H"
@@ -177,7 +178,7 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
     interpolationPtr_
     (
         coeffDict().found("interpolation")
-      ? motionInterpolation::New(fvMesh_, coeffDict().get<word>("interpolation"))
+      ? motionInterpolation::New(fvMesh_, IStringStream(coeffDict().get<word>("interpolation"))())
       : motionInterpolation::New(fvMesh_)
     ),
     // Defer diffusivity creation to the first call to diffusivity().
@@ -275,7 +276,7 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
     interpolationPtr_
     (
         coeffDict().found("interpolation")
-      ? motionInterpolation::New(fvMesh_, coeffDict().get<word>("interpolation"))
+      ? motionInterpolation::New(fvMesh_, IStringStream(coeffDict().get<word>("interpolation"))())
       : motionInterpolation::New(fvMesh_)
     ),
     diffusivityPtr_(nullptr),
@@ -339,7 +340,7 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::diffusivity()
         diffusivityPtr_ = motionDiffusivity::New
         (
             fvMesh_,
-            coeffDict().get<word>("diffusivity")
+            IStringStream(coeffDict().get<word>("diffusivity"))()
         );
     }
 
