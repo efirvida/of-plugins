@@ -10,6 +10,46 @@
 #include "OPstream.H"
 
 #include <algorithm>
+#include <cmath>
+#include <sstream>
+#include <iomanip>
+
+// FSI diagnostics: log stats from a contiguous data buffer (called on master only)
+static void fsiDiagLog(
+    const std::string& tag,
+    const std::string& dataName,
+    const double* buf,
+    std::size_t nPts,
+    int dataDim)
+{
+    double maxNorm = 0.0;
+    double sumVec[3] = {0.0, 0.0, 0.0};
+    bool hasNonFinite = false;
+    for (std::size_t n = 0; n < nPts; ++n)
+    {
+        double norm2 = 0.0;
+        for (int d = 0; d < dataDim; ++d)
+        {
+            double val = buf[n * dataDim + d];
+            norm2 += val * val;
+            if (d < 3) sumVec[d] += val;
+            if (!std::isfinite(val)) hasNonFinite = true;
+        }
+        double norm = std::sqrt(norm2);
+        if (norm > maxNorm) maxNorm = norm;
+    }
+    double totalMag = std::sqrt(sumVec[0]*sumVec[0] + sumVec[1]*sumVec[1] + sumVec[2]*sumVec[2]);
+    std::ostringstream oss;
+    oss << std::scientific << std::setprecision(4);
+    oss << "[FSI-DIAG] " << tag << " \"" << dataName << "\"";
+    oss << " (global, " << nPts << " pts)";
+    oss << ": max|nodal|=" << maxNorm
+        << "  |sum|=" << totalMag
+        << "  sum=(" << sumVec[0] << ", " << sumVec[1] << ", " << sumVec[2] << ")";
+    if (hasNonFinite)
+        oss << "  *** NON-FINITE VALUES DETECTED ***";
+    adapterInfo(oss.str(), "info");
+}
 
 
 using namespace Foam;
@@ -663,6 +703,9 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
                 for (std::size_t k = 0; k < nGlobal; ++k)
                     Pstream::broadcast(dataBuffer_[k]);
             }
+            if (Pstream::master() || !Pstream::parRun())
+                fsiDiagLog("READ", couplingDataReader->dataName(),
+                    dataBuffer_.data(), nGlobal / dataDim, dataDim);
             couplingDataReader->applyFlipNormal(dataSpan);
             couplingDataReader->read(dataBuffer_.data(), dim_);
         }
@@ -696,6 +739,9 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
                         allBufs[p][k] = globalData[start + k];
                 }
 
+                fsiDiagLog("READ", couplingDataReader->dataName(),
+                    globalData.data(),
+                    static_cast<std::size_t>(globalNumDataLocations_), dataDim);
             }
             // Replace deprecated scatterList (broken in v2506) with explicit
             // point-to-point scatter: master sends each rank's data slice.
@@ -731,6 +777,9 @@ void preciceAdapter::Interface::readCouplingData(double relativeReadTime)
                 vertexIDs_, relativeReadTime, dataSpan);
             couplingDataReader->applyFlipNormal(dataSpan);
             couplingDataReader->read(dataBuffer_.data(), dim_);
+            fsiDiagLog("READ", couplingDataReader->dataName(),
+                dataBuffer_.data(),
+                vertexIDs_.size(), dataDim);
         }
     }
 }
@@ -781,8 +830,13 @@ void preciceAdapter::Interface::writeCouplingData()
             precice::span<double> dataSpan {dataBuffer_.data(), nWrite};
             couplingDataWriter->applyFlipNormal(dataSpan);
             if (Pstream::master())
+            {
+                fsiDiagLog("WRITE", couplingDataWriter->dataName(),
+                    dataBuffer_.data(),
+                    vertexIDs_.size(), dataDim);
                 precice_.writeData(meshName_, couplingDataWriter->dataName(),
                     vertexIDs_, dataSpan);
+            }
         }
         else if (Pstream::parRun())
         {
@@ -825,6 +879,11 @@ void preciceAdapter::Interface::writeCouplingData()
                 for (int p = 0; p < Pstream::nProcs(); ++p)
                     for (double v : allBufs[p])
                         globalData.push_back(v);
+
+                fsiDiagLog("WRITE", couplingDataWriter->dataName(),
+                    globalData.data(),
+                    static_cast<std::size_t>(globalNumDataLocations_), dataDim);
+
                 precice_.writeData(
                     meshName_,
                     couplingDataWriter->dataName(),
@@ -839,6 +898,8 @@ void preciceAdapter::Interface::writeCouplingData()
                 vertexIDs_.size() * static_cast<std::size_t>(dataDim);
             precice::span<double> dataSpan {dataBuffer_.data(), nWrite};
             couplingDataWriter->applyFlipNormal(dataSpan);
+            fsiDiagLog("WRITE", couplingDataWriter->dataName(),
+                dataBuffer_.data(), vertexIDs_.size(), dataDim);
             precice_.writeData(meshName_, couplingDataWriter->dataName(),
                 vertexIDs_, dataSpan);
         }
