@@ -4,8 +4,8 @@ Interface.C
 
 CouplingDataUser.C
 
-FSI/ModuleFSI.C
-module-generic/ModuleGeneric.C
+modules/FSI/ModuleFSI.C
+modules/generic/ModuleGeneric.C
 
 Adapter.C
 

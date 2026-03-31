@@ -4,9 +4,9 @@
 #include "Interface.H"
 
 // Fluid-Structure Interaction module
-#include "FSI/FSI.H"
+#include "modules/FSI/FSI.H"
 
-#include "module-generic/Generic.H"
+#include "modules/generic/Generic.H"
 
 // NOTE: If you want to couple a new variable, include your module's header here.
 // You also need to include it in the Make/files file.

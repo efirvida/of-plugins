@@ -171,10 +171,10 @@ OpenFOAM 8 was [released](https://openfoam.org/release/8/) in July 2020 ([GitHub
     - Replace the `const dictionary& CHTDict` with `const dictionary CHTDict`.
   - In `CHT/HeatFlux.C` and in `CHT/HeatTransferCoefficient.C`:
     - Replace `KappaEff_Incompressible(mesh, nameRho, nameCp, namePr, nameAlphat)` with `KappaEff_Incompressible(mesh)`.
-  - In `FSI/ForceBase.H`:
+  - In `modules/FSI/ForceBase.H`:
     - Remove the header inclusions `immiscibleIncompressibleTwoPhaseMixture.H`, `turbulentFluidThermoModel.H`, `turbulentTransportModel.H`.
     - Include the headers `fluidThermoMomentumTransportModel.H`, `kinematicMomentumTransportModel.H`.
-  - In `FSI/ForceBase.C`, in the `ForceBase::devRhoReff()`:
+  - In `modules/FSI/ForceBase.C`, in the `ForceBase::devRhoReff()`:
     - Replace `compressible::turbulenceModel` with `compressible::momentumTransportModel`.
     - Replace `incompressible::turbulenceModel` with `incompressible::momentumTransportModel`.
     - Replace `cmpTurbModel::propertiesName` with `cmpTurbModel::typeName`.
@@ -182,7 +182,7 @@ OpenFOAM 8 was [released](https://openfoam.org/release/8/) in July 2020 ([GitHub
     - Replace `turb.devRhoReff()` with `turb.devTau()`.
     - Replace `turb.devReff()` with `turb.devSigma()`.
     - Replace `U(mesh_.lookupObject<>())` with `U = mesh_.lookupObject<>()` (where `const volVectorField& U`).
-  - In `FSI/ForceBase.C`, in the `ForceBase::mu()`:
+  - In `modules/FSI/ForceBase.C`, in the `ForceBase::mu()`:
     - Remove the line `typedef immiscibleIncompressibleTwoPhaseMixture iitpMixture;`.
     - Replace the type `iitpMixture` with `fluidThermo` and rename the respective object from `mixture` to `thermo`.
     - Replace `"mixture"` in the lookups with `basicThermo::dictName`.
@@ -200,9 +200,9 @@ OpenFOAM 9 was [released](https://openfoam.org/release/9/) in July 2021 ([GitHub
   - In `Make/options`, remove the linking of `fluidThermoMomentumTransportModels` and `incompressibleMomentumTransportModels`.
   - In `Make/options`, link to `transportModels`, `momentumTransportModels`, `incompressibleMomentumTransportModels`, `compressibleMomentumTransportModels`.
   - In `CHT/KappaEffective.H`, replace the headers `fluidThermoMomentumTransportModel.H` and `kinematicMomentumTransportModel.H` with `momentumTransportModel.H`.
-  - In `FSI/ForceBase.H`, replace the header `fluidThermoMomentumTransportModel.H` with `compressibleMomentumTransportModel.H`.
-  - In `FSI/ForceBase.C`, add the header `fluidThermo.H`.
-  - In `FSI/ForceBase.C`, replace:
+  - In `modules/FSI/ForceBase.H`, replace the header `fluidThermoMomentumTransportModel.H` with `compressibleMomentumTransportModel.H`.
+  - In `modules/FSI/ForceBase.C`, add the header `fluidThermo.H`.
+  - In `modules/FSI/ForceBase.C`, replace:
     - `compressible::momentumTransportModel` with `compressibleMomentumTransportModel`
     - `incompressible::momentumTransportModel` with `incompressibleMomentumTransportModel`. Further down, replace the usage `const incompressible::momentumTransportModel&` with `const icoTurbModel&`.
 - **Triangulation:** In `Adapter.C`:
@@ -229,8 +229,8 @@ OpenFOAM 10 was [released](https://openfoam.org/release/10/) in July 2022 ([GitH
 
 - **Physical properties and models:** The `physicalProperties` was replaced by `transportModels`.
   - In `Make/options`, replace `physicalProperties` with `transportModels` in the included paths and in the linked libraries.
-  - In `FSI/ForceBase.H`, replace `kinematicMomentumTransportModel.H` with `incompressibleMomentumTransportModel.H`.
-  - In `FSI/ForceBase.C`, replace `basicThermo::dictName` with `physicalProperties::typeName`.
+  - In `modules/FSI/ForceBase.H`, replace `kinematicMomentumTransportModel.H` with `incompressibleMomentumTransportModel.H`.
+  - In `modules/FSI/ForceBase.C`, replace `basicThermo::dictName` with `physicalProperties::typeName`.
 - **Fields `V0` and `V00`:** The fields `V0` and `V00` have been removed or renamed (not sure to what).
   - In `Adapter.C`, method `preciceAdapter::Adapter::setupMeshVolCheckpointing()`, guard each of these two fields with a `if (mesh_.foundObject<volScalarField::Internal>("V0"))` (and `if (... ("V00"))`, respectively). Alternatively, remove the implementation of this method altogether.
   - **Impact:** This might lead to stability issues in FSI simulations with implicit coupling. Check your results.

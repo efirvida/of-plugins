@@ -3,8 +3,8 @@
 
 #include "Interface.H"
 
-#include "FSI/Displacement.H"
-#include "FSI/Force.H"
+#include "Displacement.H"
+#include "Force.H"
 
 #include "fvCFD.H"
 
