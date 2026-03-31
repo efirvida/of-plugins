@@ -25,7 +25,7 @@ License
 
 \*---------------------------------------------------------------------------*/
 
-#include "dynamicOversetMotionSolverFvMesh.H"
+#include "dynamicOversetZoneDisplacementFvMesh.H"
 #include "addToRunTimeSelectionTable.H"
 
 namespace Foam

@@ -1,3 +1,0 @@
-dynamicOversetMotionSolverFvMesh.C
-
-LIB = $(FOAM_USER_LIBBIN)/libdynamicOversetMotionSolverFvMesh
