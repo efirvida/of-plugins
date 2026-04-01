@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — 2026-03-31
+## [Unreleased] — 2026-04-01
 
 ### New Features
 
@@ -24,9 +24,11 @@ selected boundary patches to 1 at a user-specified distance.  This
 guarantees zero diffusivity — and therefore zero mesh deformation — at
 the AMI interface.
 
-The decay function is a Hermite smooth-step: `f(xi) = 3*xi^2 - 2*xi^3`,
-where `xi = min(d / decayDistance, 1)` and `d` is the cell distance to
-the nearest selected patch (computed via `patchWave` / meshWave).
+The decay function is a quintic smooth-step (C² continuous):
+`f(xi) = 6*xi^5 - 15*xi^4 + 10*xi^3`, where `xi = min(d / decayDistance, 1)`
+and `d` is the cell distance to the nearest selected patch (computed via
+`patchWave` / meshWave).  Both first and second derivatives are zero at
+the endpoints, ensuring smooth diffusivity gradients near the decay boundary.
 
 **Usage:**
 ```
@@ -65,6 +67,34 @@ where the rotation must be applied AFTER the structural deformation.
 2. **solve():** Removed rigid displacement pinning. Added zone boundary constraint
    to prevent deformation diffusion outside the rotation zone.
 3. **Documentation:** Updated class docs with the correct FSI motion equation.
+
+#### 2. Upgrade `boundaryDecay` smooth-step to quintic (C²)
+
+**File:** `solidBodyDisplacementLaplacianZone/boundaryDecayDiffusivity.H`
+
+**Problem:** The cubic Hermite smooth-step (`3x²-2x³`) is only C¹ continuous —
+the second derivative is discontinuous at ξ=0 and ξ=1 (jumps of ±6).  This
+produces abrupt diffusivity gradients at the decay boundary, visible as a
+sharp ring in the deformation field.  Can cause numerical stiffness in the
+Laplacian mesh motion solver.
+
+**Fix:** Replace with the quintic smooth-step (`6x⁵-15x⁴+10x³`), which has
+`f'=0` and `f''=0` at both endpoints (C² continuous).  The transition is
+significantly smoother, reducing the risk of mesh quality degradation.
+
+#### 3. Fix zone boundary detection using face topology
+
+**File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+
+**Problem:** The zone boundary detection loop used `cellCells` indexing, which
+does not account for boundary faces.  When a zone-boundary cell touches a
+physical boundary (e.g. `propellerTip`), the `cellCells` array can be shorter
+than the cell's face count, causing out-of-bounds access.
+
+**Fix:** Replace `cellCells` lookup with explicit face owner/neighbour traversal.
+Skip boundary faces (`!isInternalFace`), and use owner/neighbour to find the
+correct adjacent cell.  Also removed a spurious `cellDisplacement_ = zero`
+reset in `curPoints()` that was clearing the solved displacement field.
 
 ---
 
@@ -120,7 +150,19 @@ where the rotation must be applied AFTER the structural deformation.
 
 ---
 
-#### 5. Modernize precice-openfoam-adapter memory management
+#### 5. Improve fsiDiagLog formatting and scalar data handling
+
+**File:** `precice-openfoam-adapter/Interface.C`
+
+**Changes:**
+- Log scalar data (e.g. omega) as single value instead of meaningless norm/sum statistics
+- Remove redundant `[FSI-DIAG]` prefix (already tagged by `adapterInfo`)
+- Add braces to single-line control flow blocks (style consistency)
+- Use `const` qualifiers for local variables
+
+---
+
+#### 6. Modernize precice-openfoam-adapter memory management
 
 **Files:**
 - `precice-openfoam-adapter/Adapter.C`, `Adapter.H`
@@ -143,7 +185,7 @@ where the rotation must be applied AFTER the structural deformation.
 
 ---
 
-#### 6. Remove unused FSI modules (Stress, DisplacementDelta)
+#### 7. Remove unused FSI modules (Stress, DisplacementDelta)
 
 **Deleted files:**
 - `precice-openfoam-adapter/FSI/Stress.C`, `Stress.H`
@@ -157,7 +199,7 @@ where the rotation must be applied AFTER the structural deformation.
 
 ---
 
-#### 7. Add AGENTS.md for coding agents
+#### 8. Add AGENTS.md for coding agents
 
 **File:** `AGENTS.md` (new)
 
