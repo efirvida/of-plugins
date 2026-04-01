@@ -431,6 +431,36 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
         twoDCorrectPoints(curPoints);
 
+        // Sync processor-boundary point positions so both sides of each
+        // processor patch compute identical face areas in calcGeometry().
+        // volPointInterpolation sums across processors but the rotation
+        // step may introduce tiny inconsistencies; averaging removes them.
+        if (Pstream::parRun())
+        {
+            scalarField count(fvMesh_.nPoints(), scalar(1));
+            syncTools::syncPointList
+            (
+                fvMesh_,
+                count,
+                plusEqOp<scalar>(),
+                scalar(0)
+            );
+            syncTools::syncPointList
+            (
+                fvMesh_,
+                curPoints,
+                plusEqOp<vector>(),
+                vector::zero
+            );
+            forAll(curPoints, i)
+            {
+                if (count[i] > 1.5)
+                {
+                    curPoints[i] /= count[i];
+                }
+            }
+        }
+
         cellDisplacement_.primitiveFieldRef() = vector::zero;
         cellDisplacement_.correctBoundaryConditions();
 
