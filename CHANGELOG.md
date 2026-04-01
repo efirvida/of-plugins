@@ -44,7 +44,25 @@ Where:
 
 ### Bug Fixes (FSI Physics)
 
-#### 1. Fix FSI motion: apply deformation BEFORE rotation
+#### 1. Remove ghost time directories from implicit coupling sub-iterations
+
+**Files:**
+- `precice-openfoam-adapter/Adapter.C`
+- `precice-openfoam-adapter/Adapter.H`
+
+**Problem:** During implicit coupling, function objects (forces, propellerInfo,
+etc.) write `functionObjectProperties` to the checkpoint time directory during
+sub-iterations.  When the coupling window completes and time advances, these
+directories remain as ghosts containing only
+`uniform/functionObjects/functionObjectProperties` but no field data (U, p, …).
+This breaks post-processing tools like `reconstructPar`, which expect all
+time directories to contain field files.
+
+**Fix:** After a coupling window completes, check whether the previous
+checkpoint time directory is a ghost (no top-level field files) and remove
+it with `rmDir()`.  Real write directories are left untouched.
+
+#### 2. Fix FSI motion: apply deformation BEFORE rotation
 
 **Files:**
 - `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
@@ -68,7 +86,7 @@ where the rotation must be applied AFTER the structural deformation.
    to prevent deformation diffusion outside the rotation zone.
 3. **Documentation:** Updated class docs with the correct FSI motion equation.
 
-#### 2. Upgrade `boundaryDecay` smooth-step to quintic (C²)
+#### 3. Upgrade `boundaryDecay` smooth-step to quintic (C²)
 
 **File:** `solidBodyDisplacementLaplacianZone/boundaryDecayDiffusivity.H`
 
@@ -82,7 +100,7 @@ Laplacian mesh motion solver.
 `f'=0` and `f''=0` at both endpoints (C² continuous).  The transition is
 significantly smoother, reducing the risk of mesh quality degradation.
 
-#### 3. Fix zone boundary detection using face topology
+#### 4. Fix zone boundary detection using face topology
 
 **File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
 
