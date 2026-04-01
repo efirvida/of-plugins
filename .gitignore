@@ -7,3 +7,4 @@
 
 lnInclude/
 platforms/
+**/Make/linux64GccDPInt64Opt/
