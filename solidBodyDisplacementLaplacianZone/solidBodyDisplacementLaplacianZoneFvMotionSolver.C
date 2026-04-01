@@ -221,7 +221,7 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
     {
         Info<< type() << ":" << nl
             << "    diffusivity       : "
-            << coeffDict().get<word>("diffusivity") << nl
+            << coeffDict().lookup("diffusivity") << nl
             << "    frozenPoints zone : " << frozenPointsZone_ << endl;
     }
 
@@ -342,7 +342,7 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::diffusivity()
         diffusivityPtr_ = motionDiffusivity::New
         (
             fvMesh_,
-            IStringStream(coeffDict().get<word>("diffusivity"))()
+            coeffDict().lookup("diffusivity")
         );
     }
 
@@ -360,8 +360,6 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
     );
 
     pointDisplacement_.correctBoundaryConditions();
-
-    const pointField& deformedPoints = points0();
 
     tmp<pointField> tcurPoints(new pointField(points0()));
     pointField& curPoints = tcurPoints.ref();
