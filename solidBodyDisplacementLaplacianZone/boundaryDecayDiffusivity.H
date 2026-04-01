@@ -37,10 +37,10 @@ Description
     Mesh Interface) boundaries where diffused deformation would break the
     interface connectivity.
 
-    The decay factor is computed as a Hermite smooth-step:
+    The decay factor is computed as a quintic smooth-step (C² continuous):
 
     \f[
-        f(\xi) = 3\xi^2 - 2\xi^3, \quad \xi = \min(d / d_{decay}, 1)
+        f(\xi) = 6\xi^5 - 15\xi^4 + 10\xi^3, \quad \xi = \min(d / d_{decay}, 1)
     \f]
 
     where \f$d\f$ is the cell distance to the nearest selected patch and
@@ -108,11 +108,11 @@ class boundaryDecayDiffusivity
         //  and update the cached decayFactor_ field
         void calcDecayFactor();
 
-        //- Hermite smooth-step: 3x^2 - 2x^3
+        //- Quintic smooth-step (C2): 6x^5 - 15x^4 + 10x^3
         static inline scalar smoothStep(const scalar xi)
         {
             const scalar x = max(scalar(0), min(scalar(1), xi));
-            return x * x * (scalar(3) - scalar(2) * x);
+            return x * x * x * (x * (x * scalar(6) - scalar(15)) + scalar(10));
         }
 
         //- No copy construct
