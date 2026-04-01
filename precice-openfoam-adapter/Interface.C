@@ -21,31 +21,58 @@ static void fsiDiagLog(
     int dataDim)
 {
     double maxNorm = 0.0;
-    double sumVec[3] = {0.0, 0.0, 0.0};
     bool hasNonFinite = false;
+
+    // Scalars are logged as a single value. Vectors/tensors keep norm/sum stats.
+    double sumVec[3] = {0.0, 0.0, 0.0};
+
     for (std::size_t n = 0; n < nPts; ++n)
     {
         double norm2 = 0.0;
         for (int d = 0; d < dataDim; ++d)
         {
-            double val = buf[n * dataDim + d];
+            const double val = buf[n * dataDim + d];
             norm2 += val * val;
-            if (d < 3) sumVec[d] += val;
-            if (!std::isfinite(val)) hasNonFinite = true;
+            if (d < 3)
+            {
+                sumVec[d] += val;
+            }
+
+            if (!std::isfinite(val))
+            {
+                hasNonFinite = true;
+            }
         }
-        double norm = std::sqrt(norm2);
-        if (norm > maxNorm) maxNorm = norm;
+        const double norm = std::sqrt(norm2);
+        if (norm > maxNorm)
+        {
+            maxNorm = norm;
+        }
     }
-    double totalMag = std::sqrt(sumVec[0]*sumVec[0] + sumVec[1]*sumVec[1] + sumVec[2]*sumVec[2]);
+
+    const double totalMag = std::sqrt(sumVec[0]*sumVec[0] + sumVec[1]*sumVec[1] + sumVec[2]*sumVec[2]);
     std::ostringstream oss;
     oss << std::scientific << std::setprecision(4);
-    oss << "[FSI-DIAG] " << tag << " \"" << dataName << "\"";
+    oss << tag << " \"" << dataName << "\"";
     oss << " (global, " << nPts << " pts)";
-    oss << ": max|nodal|=" << maxNorm
-        << "  |sum|=" << totalMag
-        << "  sum=(" << sumVec[0] << ", " << sumVec[1] << ", " << sumVec[2] << ")";
+
+    if (dataDim == 1)
+    {
+        const double value = nPts ? buf[0] : 0.0;
+        oss << ": value=" << value;
+    }
+    else
+    {
+        oss << ": max|nodal|=" << maxNorm
+            << "  |sum|=" << totalMag
+            << "  sum=(" << sumVec[0] << ", " << sumVec[1] << ", " << sumVec[2] << ")";
+    }
+
     if (hasNonFinite)
+    {
         oss << "  *** NON-FINITE VALUES DETECTED ***";
+    }
+
     adapterInfo(oss.str(), "info");
 }
 
