@@ -474,7 +474,7 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
     (
         fvm::laplacian
         (
-            dimensionedScalar("unitScale", dimless, 1.0)
+            dimensionedScalar("viscosity", dimViscosity, 1.0)
            *diffusivity().operator()(),
             cellDisplacement_,
             "laplacian(diffusivity,cellDisplacement)"
