@@ -185,14 +185,11 @@ Foam::scalar Foam::Function1Types::preciceOmega::value(const scalar t) const
     initField();
 
     const scalar omega = omegaField_->value();
+    const scalar rpm = omega * 60.0 / (2.0 * constant::mathematical::pi);
 
-    if (debug)
-    {
-        const scalar rpm = omega * 60.0 / (2.0 * constant::mathematical::pi);
-        Info<< "preciceOmega::value(t=" << t << ")"
-            << " omega=" << omega << " [rad/s]"
-            << " (" << rpm << " [rpm])" << endl;
-    }
+    Info<< "preciceOmega::value(t=" << t << ")"
+        << " omega=" << omega << " [rad/s]"
+        << " (" << rpm << " [rpm])" << endl;
 
     return omega;
 }
