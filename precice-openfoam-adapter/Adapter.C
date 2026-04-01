@@ -3,6 +3,7 @@
 #include "Utilities.H"
 
 #include "IOstreams.H"
+#include "OSspecific.H"
 #include <algorithm>
 
 using namespace Foam;
@@ -480,6 +481,10 @@ try
         readCheckpoint();
     }
 
+    // Save the previous checkpoint time value before writeCheckpoint()
+    // overwrites it (needed for ghost directory cleanup below).
+    const Foam::scalar prevCheckpointTimeValue = couplingIterationTimeValue_;
+
     // Write checkpoint if required
     if (requiresWritingCheckpoint())
     {
@@ -494,6 +499,13 @@ try
     SETUP_TIMER();
     if (checkpointing_ && isCouplingTimeWindowComplete())
     {
+        // Clean up ghost time directories left by sub-iterations.
+        // During implicit coupling, function objects (forces, propellerInfo,
+        // etc.) may write functionObjectProperties to the checkpoint time
+        // directory, creating a "ghost" directory with no field data.
+        // This breaks post-processing tools like reconstructPar.
+        removeGhostTimeDirectory(prevCheckpointTimeValue);
+
         // Check if the time directory already exists
         // (i.e. the solver wrote results that need to be updated)
         if (runTime_.timePath().type() == fileName::DIRECTORY)
@@ -798,6 +810,43 @@ void preciceAdapter::Adapter::reloadCheckpointTime()
 
     return;
 }
+
+
+void preciceAdapter::Adapter::removeGhostTimeDirectory(
+    const Foam::scalar timeValue
+)
+{
+    // Construct the time directory path for the given time value.
+    // In parallel, runTime_.path() already includes the processorN prefix.
+    const fileName timePath =
+        runTime_.path() / runTime_.timeName(timeValue);
+
+    // Only act if the directory exists
+    if (timePath.type() != fileName::DIRECTORY)
+    {
+        return;
+    }
+
+    // Check whether any field files exist at the top level.
+    // Ghost directories only contain uniform/ subdir with
+    // functionObjectProperties.  If ANY regular file exists at
+    // the top level, this is a real write — leave it alone.
+    const fileNameList entries = Foam::readDir(timePath, fileName::FILE);
+
+    if (!entries.empty())
+    {
+        // Real field files exist (U, p, …) — not a ghost
+        return;
+    }
+
+    // Only uniform/ (or nothing) at the top level → ghost directory
+    DEBUG(adapterInfo(
+        "Removing ghost time directory " + timePath
+        + " (created by function objects during sub-iterations)"));
+
+    Foam::rmDir(timePath);
+}
+
 
 void preciceAdapter::Adapter::storeMeshPoints()
 {

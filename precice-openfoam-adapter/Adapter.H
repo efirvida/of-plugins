@@ -273,6 +273,13 @@ private:
     //- Restore the copy of the runTime object
     void reloadCheckpointTime();
 
+    //- Remove ghost time directories created by function objects
+    //  during implicit coupling sub-iterations.  A ghost directory
+    //  contains only uniform/functionObjects/functionObjectProperties
+    //  but no field files.  Such directories break post-processing
+    //  tools like reconstructPar.
+    void removeGhostTimeDirectory(const Foam::scalar timeValue);
+
     //- Store the locations of the mesh points
     void storeMeshPoints();
 
