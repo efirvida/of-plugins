@@ -461,9 +461,6 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
             }
         }
 
-        cellDisplacement_.primitiveFieldRef() = vector::zero;
-        cellDisplacement_.correctBoundaryConditions();
-
         return tcurPoints;
     }
 }
@@ -529,11 +526,22 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
             forAll(c, j)
             {
-                const label neighborCelli = fvMesh_.cellCells()[celli][j];
-                if (!zoneCellSet.found(neighborCelli))
+                const label facei = c[j];
+
+                // Only internal faces have a neighbour cell;
+                // boundary faces (e.g. propellerTip) are skipped.
+                if (fvMesh_.isInternalFace(facei))
                 {
-                    isOnZoneBoundary = true;
-                    break;
+                    const label own = fvMesh_.faceOwner()[facei];
+                    const label nei = fvMesh_.faceNeighbour()[facei];
+                    const label neighborCelli =
+                        (own == celli) ? nei : own;
+
+                    if (!zoneCellSet.found(neighborCelli))
+                    {
+                        isOnZoneBoundary = true;
+                        break;
+                    }
                 }
             }
 
