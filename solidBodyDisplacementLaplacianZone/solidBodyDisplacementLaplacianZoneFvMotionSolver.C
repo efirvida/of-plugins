@@ -401,11 +401,10 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
     // The cyclicAMI BC interpolates values from the coupled side, which
     // can reintroduce non-zero displacement at AMI points.  By applying
     // the decay last, we guarantee:
-    //   1. Points ON the AMI patches have exactly zero displacement
-    //   2. Points within decayDistance (on either side) are smoothly
-    //      clamped via quintic smooth-step
-    //   3. The cyclicAMI interpolation cannot override the decay
-    if (displacementDecayDistance_ > SMALL)
+    //   1. Points INSIDE the zone within decayDistance: quintic smooth decay
+    //   2. Points OUTSIDE the zone: hard zero (no displacement at all)
+    //   3. AMI patch boundary fields: explicitly zeroed
+    if (displacementDecayDistance_ > SMALL && !moveAllCells_)
     {
         const labelHashSet patchIDs
         (
@@ -414,17 +413,27 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
 
         if (!patchIDs.empty())
         {
-            // Compute cell distances via patchWave (both sides of AMI)
+            // Build lookup set for zone points
+            const labelHashSet zonePointSet(pointIDs_);
+
+            // Compute cell distances via patchWave
             patchWave wave(fvMesh_, patchIDs, true);
             const scalarField& cellDist = wave.distance();
 
             const labelListList& pointFaces = fvMesh_.pointFaces();
 
-            // --- Decay internal (primitive) point field ---
             vectorField& pdRef = pointDisplacement_.primitiveFieldRef();
 
             forAll(pdRef, pointi)
             {
+                if (!zonePointSet.found(pointi))
+                {
+                    // Outside the rotation zone: hard zero
+                    pdRef[pointi] = Zero;
+                    continue;
+                }
+
+                // Inside the zone: smooth decay near AMI
                 scalar minDist = GREAT;
                 const labelList& pFaces = pointFaces[pointi];
                 forAll(pFaces, fi)
@@ -456,8 +465,6 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
             }
 
             // --- Explicitly zero out AMI patch boundary fields ---
-            // This ensures that even if the cyclicAMI BC wrote non-zero
-            // values to the patch field, they are clamped to zero.
             forAllConstIters(patchIDs, iter)
             {
                 const label patchi = iter.key();
@@ -676,11 +683,10 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
     fvOptions.correct(cellDisplacement_);
 
-    // Post-solve displacement decay: smoothly clamp displacement to zero
-    // near the specified patches.  This directly controls the displacement
-    // values (unlike boundaryDecay which only modifies diffusivity and
-    // creates a steep gradient "barrier" instead of a smooth transition).
-    if (displacementDecayDistance_ > SMALL)
+    // Post-solve displacement decay on cellDisplacement:
+    //   - Inside the zone: quintic smooth-step decay near AMI
+    //   - Outside the zone: hard zero
+    if (displacementDecayDistance_ > SMALL && !moveAllCells_)
     {
         const labelHashSet patchIDs
         (
@@ -689,6 +695,8 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
         if (!patchIDs.empty())
         {
+            const labelHashSet zoneCellSet(cellIDs_);
+
             patchWave wave(fvMesh_, patchIDs, true);
             const scalarField& cellDist = wave.distance();
 
@@ -696,6 +704,14 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
 
             forAll(dispRef, celli)
             {
+                if (!zoneCellSet.found(celli))
+                {
+                    // Outside the rotation zone: hard zero
+                    dispRef[celli] = Zero;
+                    continue;
+                }
+
+                // Inside the zone: smooth decay near AMI
                 const scalar xi =
                     min(cellDist[celli] / displacementDecayDistance_, scalar(1));
 
