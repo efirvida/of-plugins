@@ -40,6 +40,8 @@ License
 #include "syncTools.H"
 #include "DynamicList.H"
 #include "pointMesh.H"
+#include "patchWave.H"
+#include "HashSet.H"
 
 namespace Foam
 {
@@ -196,7 +198,9 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
     cellIDs_(),
     cellCentres0_(fvMesh_.cellCentres()),
     pointIDs_(),
-    moveAllCells_(false)
+    moveAllCells_(false),
+    displacementDecayDistance_(0),
+    displacementDecayPatches_()
 {
     if (!solidBodyMotionPtr_)
     {
@@ -204,6 +208,21 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
             << "Failed to create solidBodyMotionFunction. "
             << "Check solidBodyMotionFunction entry in dictionary."
             << exit(FatalError);
+    }
+
+    // Read optional displacement decay sub-dictionary
+    const dictionary* decayDictPtr =
+        coeffDict().findDict("displacementDecay");
+    if (decayDictPtr)
+    {
+        displacementDecayDistance_ =
+            decayDictPtr->get<scalar>("distance");
+        displacementDecayPatches_ =
+            decayDictPtr->get<wordRes>("patches");
+
+        Info<< type() << ": displacement decay enabled" << nl
+            << "    distance : " << displacementDecayDistance_ << nl
+            << "    patches  : " << displacementDecayPatches_ << endl;
     }
 
     initZoneAndPointIDs();
@@ -292,7 +311,9 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
     cellIDs_(),
     cellCentres0_(fvMesh_.cellCentres()),
     pointIDs_(),
-    moveAllCells_(false)
+    moveAllCells_(false),
+    displacementDecayDistance_(0),
+    displacementDecayPatches_()
 {
     if (!solidBodyMotionPtr_)
     {
@@ -300,6 +321,21 @@ solidBodyDisplacementLaplacianZoneFvMotionSolver
             << "Failed to create solidBodyMotionFunction. "
             << "Check solidBodyMotionFunction entry in dictionary."
             << exit(FatalError);
+    }
+
+    // Read optional displacement decay sub-dictionary
+    const dictionary* decayDictPtr =
+        coeffDict().findDict("displacementDecay");
+    if (decayDictPtr)
+    {
+        displacementDecayDistance_ =
+            decayDictPtr->get<scalar>("distance");
+        displacementDecayPatches_ =
+            decayDictPtr->get<wordRes>("patches");
+
+        Info<< type() << ": displacement decay enabled" << nl
+            << "    distance : " << displacementDecayDistance_ << nl
+            << "    patches  : " << displacementDecayPatches_ << endl;
     }
 
     initZoneAndPointIDs();
@@ -360,6 +396,75 @@ Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::curPoints() const
     );
 
     pointDisplacement_.correctBoundaryConditions();
+
+    // Apply displacement decay AFTER correctBoundaryConditions().
+    // The cyclicAMI BC interpolates values from the coupled side, which
+    // can reintroduce non-zero displacement at AMI points.  By applying
+    // the decay last, we guarantee:
+    //   1. Points ON the AMI patches have exactly zero displacement
+    //   2. Points within decayDistance (on either side) are smoothly
+    //      clamped via quintic smooth-step
+    //   3. The cyclicAMI interpolation cannot override the decay
+    if (displacementDecayDistance_ > SMALL)
+    {
+        const labelHashSet patchIDs
+        (
+            fvMesh_.boundaryMesh().patchSet(displacementDecayPatches_)
+        );
+
+        if (!patchIDs.empty())
+        {
+            // Compute cell distances via patchWave (both sides of AMI)
+            patchWave wave(fvMesh_, patchIDs, true);
+            const scalarField& cellDist = wave.distance();
+
+            const labelListList& pointFaces = fvMesh_.pointFaces();
+
+            // --- Decay internal (primitive) point field ---
+            vectorField& pdRef = pointDisplacement_.primitiveFieldRef();
+
+            forAll(pdRef, pointi)
+            {
+                scalar minDist = GREAT;
+                const labelList& pFaces = pointFaces[pointi];
+                forAll(pFaces, fi)
+                {
+                    const label facei = pFaces[fi];
+                    const label own = fvMesh_.faceOwner()[facei];
+                    if (cellDist[own] < minDist)
+                    {
+                        minDist = cellDist[own];
+                    }
+                    if (fvMesh_.isInternalFace(facei))
+                    {
+                        const label nei = fvMesh_.faceNeighbour()[facei];
+                        if (cellDist[nei] < minDist)
+                        {
+                            minDist = cellDist[nei];
+                        }
+                    }
+                }
+
+                const scalar xi =
+                    min(minDist / displacementDecayDistance_, scalar(1));
+
+                // Quintic smooth-step (C2): 6x^5 - 15x^4 + 10x^3
+                const scalar f =
+                    xi * xi * xi * (xi * (xi * scalar(6) - scalar(15)) + scalar(10));
+
+                pdRef[pointi] *= f;
+            }
+
+            // --- Explicitly zero out AMI patch boundary fields ---
+            // This ensures that even if the cyclicAMI BC wrote non-zero
+            // values to the patch field, they are clamped to zero.
+            forAllConstIters(patchIDs, iter)
+            {
+                const label patchi = iter.key();
+                pointDisplacement_.boundaryFieldRef()[patchi] == Zero;
+            }
+        }
+    }
 
     tmp<pointField> tcurPoints(new pointField(points0()));
     pointField& curPoints = tcurPoints.ref();
@@ -570,6 +675,38 @@ void Foam::solidBodyDisplacementLaplacianZoneFvMotionSolver::solve()
     TEqn.solveSegregatedOrCoupled();
 
     fvOptions.correct(cellDisplacement_);
+
+    // Post-solve displacement decay: smoothly clamp displacement to zero
+    // near the specified patches.  This directly controls the displacement
+    // values (unlike boundaryDecay which only modifies diffusivity and
+    // creates a steep gradient "barrier" instead of a smooth transition).
+    if (displacementDecayDistance_ > SMALL)
+    {
+        const labelHashSet patchIDs
+        (
+            fvMesh_.boundaryMesh().patchSet(displacementDecayPatches_)
+        );
+
+        if (!patchIDs.empty())
+        {
+            patchWave wave(fvMesh_, patchIDs, true);
+            const scalarField& cellDist = wave.distance();
+
+            vectorField& dispRef = cellDisplacement_.primitiveFieldRef();
+
+            forAll(dispRef, celli)
+            {
+                const scalar xi =
+                    min(cellDist[celli] / displacementDecayDistance_, scalar(1));
+
+                // Quintic smooth-step (C2): 6x^5 - 15x^4 + 10x^3
+                const scalar f =
+                    xi * xi * xi * (xi * (xi * scalar(6) - scalar(15)) + scalar(10));
+
+                dispRef[celli] *= f;
+            }
+        }
+    }
 
     if (cellMaskPtr)
     {
