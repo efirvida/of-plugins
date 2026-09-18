@@ -1,7 +1,7 @@
 #!/bin/sh
 cd "${0%/*}" || exit
 
-for d in solidBodyDisplacementLaplacianZone dynamicOversetZoneDisplacementFvMesh fsiOmega precice-openfoam-adapter
+for d in solidBodyDisplacementLaplacianZone dynamicOversetZoneDisplacementFvMesh fsiOmega precice-openfoam-adapter turbinesFoam
  do
     echo ""
     echo "=== Building $d ==="

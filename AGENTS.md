@@ -11,17 +11,22 @@ solidBodyDisplacementLaplacianZone/   # Laplacian motion solver with rigid zone 
 dynamicOversetZoneDisplacementFvMesh/ # Overset mesh wrapper for zone-based motion
 fsiOmega/                             # Angular-velocity Function1 driven by preCICE
 precice-openfoam-adapter/             # Full OpenFOAM–preCICE coupling adapter (FSI-only fork)
+turbinesFoam/                         # Actuator line turbine library (vendored fork, history stripped)
 ```
 
 The adapter is an FSI-only fork of the upstream preCICE adapter: coupling
 modules live in `precice-openfoam-adapter/modules/FSI/` and
 `modules/generic/` (`Stress` and `DisplacementDelta` modules were removed).
+`turbinesFoam/` is a vendored copy of turbinesFoam/turbinesFoam with its
+git history removed and its former `foamStyleCheck` submodule flattened
+into plain files — it builds `libturbinesFoam` and cleans via `Allwclean`
+(upstream name).
 
 Built library names (loaded via `libs (...)` in `controlDict`):
 `libsolidBodyDisplacementLaplacianZoneFvMotionSolver`,
 `libdynamicOversetZoneDisplacementFvMesh`, `libfsiOmega`,
-`libpreciceAdapterFunctionObject`. Root `README.md` documents case setup
-and the FSI motion model.
+`libpreciceAdapterFunctionObject`, `libturbinesFoam`. Root `README.md`
+documents case setup and the FSI motion model.
 
 ## Build / Clean
 
@@ -35,6 +40,7 @@ cd solidBodyDisplacementLaplacianZone && ./Allwmake
 cd dynamicOversetZoneDisplacementFvMesh && ./Allwmake
 cd fsiOmega && ./Allwmake
 cd precice-openfoam-adapter && ./Allwmake   # requires preCICE + pkg-config
+cd turbinesFoam && ./Allwmake               # clean with ./Allwclean (upstream name)
 ```
 
 Requires a loaded OpenFOAM environment (plugin `Allclean` scripts refuse to
@@ -163,7 +169,8 @@ Foam::constant::mathematical::pi   // NOT M_PI
   `precice-openfoam-adapter/CHANGELOG.md` directly — entries are merged at release)
 
 ## Shell scripts
-- All `Allwmake`/`Allclean` use `#!/bin/sh` (POSIX sh, not bash)
+- All `Allwmake`/`Allclean` use `#!/bin/sh` (POSIX sh, not bash) except the
+  vendored `turbinesFoam/` scripts (`#!/usr/bin/env bash`, upstream style)
 - First line: `cd "${0%/*}" || exit`
 - Clean scripts use `set -e -u`
 - Lint with `shellcheck --exclude=SC1091`

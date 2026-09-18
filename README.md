@@ -2,12 +2,13 @@
 
 Standalone OpenFOAM plugin collection for rotating FSI cases and preCICE coupling.
 
-This repository provides four independent plugins:
+This repository provides five independent plugins:
 
 1. `solidBodyDisplacementLaplacianZone` — motion solver for zonal rigid body + mesh deformation
 2. `dynamicOversetZoneDisplacementFvMesh` — overset wrapper for the above
 3. `fsiOmega` — `preciceOmega` Function1 for preCICE angular velocity coupling
 4. `precice-openfoam-adapter` — preCICE OpenFOAM adapter (diverging fork)
+5. `turbinesFoam` — actuator line turbine library (vendored independent fork)
 
 No submodules are used. All code is self-contained and built with `wmake`.
 
@@ -31,6 +32,12 @@ No submodules are used. All code is self-contained and built with `wmake`.
   - Includes **v2506 fix**: deprecated `Pstream::scatterList`/`gatherList` replaced with `OPstream`/`IPstream`.
   - See [precice-openfoam-adapter/README.md](precice-openfoam-adapter/README.md) for original documentation.
   - **Note**: This copy is independent — changes here do **not** automatically sync upstream.
+- `turbinesFoam/`
+  - **Vendored independent fork** of [turbinesFoam/turbinesFoam](https://github.com/turbinesFoam/turbinesFoam)
+    (actuator line method for wind and marine turbines).
+  - Original git history stripped; included as a base for research development.
+  - `foamStyleCheck` (formerly a git submodule) vendored as plain files.
+  - See [turbinesFoam/README.md](turbinesFoam/README.md) for original documentation.
 
 ## FSI Motion Model
 
@@ -143,13 +150,14 @@ From repository root:
 ./Allwmake
 ```
 
-This builds all four plugins:
+This builds all five plugins:
 
 - `libsolidBodyDisplacementLaplacianZoneFvMotionSolver.so`
 - `libdynamicOversetZoneDisplacementFvMesh.so`
 - `libfsiOmega.so`
 - `libpreciceAdapterFunctionObject.so` (adapter — warns but continues if
   preCICE's `pkg-config` file is missing)
+- `libturbinesFoam.so`
 
 into `FOAM_USER_LIBBIN`.
 
@@ -168,6 +176,7 @@ cd solidBodyDisplacementLaplacianZone && ./Allwmake
 cd ../dynamicOversetZoneDisplacementFvMesh && ./Allwmake
 cd ../fsiOmega && ./Allwmake
 cd ../precice-openfoam-adapter && ./Allwmake   # requires preCICE dev files
+cd ../turbinesFoam && ./Allwmake
 ```
 
 ## Usage: zonal rigid rotation + mesh deformation (non-overset)
@@ -347,6 +356,8 @@ upstream releases.
   and the problematic multi-solver accumulation approach.
 - This repository intentionally contains only these plugins and has no dependency
   on git submodules.
+- `turbinesFoam` keeps its upstream script names: build with `./Allwmake`,
+  clean with `./Allwclean` (the root `./Allclean` handles this automatically).
 
 ## License
 

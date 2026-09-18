@@ -9,4 +9,8 @@ for d in solidBodyDisplacementLaplacianZone dynamicOversetZoneDisplacementFvMesh
  done
 
 echo ""
+echo "=== Cleaning turbinesFoam ==="
+(cd turbinesFoam && ./Allwclean "$@") || exit $?
+
+echo ""
 echo "All plugins cleaned successfully."

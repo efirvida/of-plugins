@@ -1,0 +1,10 @@
+*~
+*linux64Gcc*
+*.dep
+*lnInclude
+callgrind*
+*.pyc
+*.swp
+tests/.noseids
+**darwin64Clang**
+.vscode

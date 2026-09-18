@@ -77,6 +77,28 @@ reintroduce non-zero displacement at the interface:
 The feature is skipped entirely when `moveAllCells` is active (no zone
 selected).
 
+#### 3. Vendor `turbinesFoam` as a new plugin
+
+**Files:**
+- `turbinesFoam/` (new — complete upstream tree, git history stripped)
+- `Allwmake`, `Allclean` (updated)
+- `README.md` (updated)
+
+**Problem:** The actuator line library
+[turbinesFoam/turbinesFoam](https://github.com/turbinesFoam/turbinesFoam)
+was needed as a base for further research development, but the upstream
+repository uses git submodules and its own git history.
+
+**Solution:** Vendored the upstream codebase as an independent plugin
+directory:
+- Full upstream tree imported (`src/`, `tutorials/`, `tests/`,
+  `foamStyleCheck/`) with its original GPL-3.0 license preserved
+- Original git history removed (independent fork)
+- `foamStyleCheck` (upstream git submodule) vendored as plain files —
+  the repository remains submodule-free
+- Root `Allwmake` builds `libturbinesFoam.so`; root `Allclean` invokes
+  the upstream-named `Allwclean` script
+
 ---
 
 ### Bug Fixes (FSI Physics)
