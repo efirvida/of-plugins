@@ -1,14 +1,26 @@
 # of-plugins
 
-Standalone OpenFOAM plugin collection for rotating FSI cases and preCICE coupling.
+OpenFOAM plugins for **fluid–structure interaction (FSI)** of rotating
+machinery: zonal rigid-body motion, Laplacian mesh deformation, overset
+meshes, preCICE coupling, and actuator-line turbine loading.
 
-This repository provides five independent plugins:
+![OpenFOAM](https://img.shields.io/badge/OpenFOAM-v2406%E2%80%93v2512-brightgreen)
+![preCICE](https://img.shields.io/badge/preCICE-v3-blue)
+![License](https://img.shields.io/badge/License-GPL--3.0--or--later-green)
 
-1. `solidBodyDisplacementLaplacianZone` — motion solver for zonal rigid body + mesh deformation
-2. `dynamicOversetZoneDisplacementFvMesh` — overset wrapper for the above
-3. `fsiOmega` — `preciceOmega` Function1 for preCICE angular velocity coupling
-4. `precice-openfoam-adapter` — preCICE OpenFOAM adapter (diverging fork)
-5. `turbinesFoam` — actuator line turbine library (vendored independent fork)
+## How the plugins fit together
+
+1. **`precice-openfoam-adapter`** — preCICE coupling functionObject: exchanges
+   forces and displacements with an external structural solver.
+2. **`solidBodyDisplacementLaplacianZone`** — mesh-motion solver: applies the
+   structural displacement to the blade surface and rotates the rotor zone
+   rigidly, diffusing the deformation through the mesh with a Laplacian.
+3. **`dynamicOversetZoneDisplacementFvMesh`** — runs the same motion solver on
+   overset (chimera) meshes.
+4. **`fsiOmega`** — `preciceOmega` Function1: rotor angular velocity read from
+   preCICE for `rotatingMotion`.
+5. **`turbinesFoam`** — actuator-line `fvOptions` adding aerodynamic loading to
+   any compatible solver (`simpleFoam`, `pimpleFoam`, ...).
 
 No submodules are used. All code is self-contained and built with `wmake`.
 

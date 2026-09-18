@@ -100,6 +100,20 @@ directory:
 - Root `Allwmake` builds `libturbinesFoam.so`; root `Allclean` invokes
   the upstream-named `Allwclean` script
 
+#### 4. Refocus README on FSI with OpenFOAM
+
+**Files:**
+- `README.md`
+
+**Problem:** The README presented the repository as a generic plugin
+collection.  The plugins actually form a complete FSI pipeline for
+rotating machinery (coupling → mesh motion → rotation → loading).
+
+**Solution:** Rewrote the introduction around the FSI workflow, adding a
+"How the plugins fit together" section mapping each plugin to its role in
+the coupled simulation, badges for OpenFOAM/preCICE/licence, and clearer
+plugin descriptions.  Technical usage sections unchanged.
+
 ---
 
 ### Bug Fixes (FSI Physics)
