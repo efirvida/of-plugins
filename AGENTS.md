@@ -50,6 +50,28 @@ the `.pc` file is missing. Environment variables:
 - `PRECICE_OPENFOAM_CFLAGS` — extra preprocessor flags (e.g. `-DADAPTER_DEBUG_MODE`)
 - `PRECICE_OPENFOAM_TARGET_DIR` — install destination (default `$FOAM_USER_LIBBIN`)
 
+### Building on SDumont (module env)
+
+The `openfoam/v2506_*` module does not export the wmake identity variables
+and its `LD_LIBRARY_PATH` points at a dead Int32 dir. Set them explicitly
+before building (Int64 to match the module's OpenFOAM):
+
+```sh
+module load openfoam/v2506_openmpi-4.1.4_gnu
+export WM_ARCH=linux64 WM_COMPILER=Gcc WM_COMPILE_OPTION=Opt
+export WM_PRECISION_OPTION=DP WM_LABEL_SIZE=64
+export WM_OPTIONS=linux64GccDPInt64Opt
+export FOAM_USER_LIBBIN=$WM_PROJECT_USER_DIR/platforms/$WM_OPTIONS/lib
+export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib/sys-openmpi:$LD_LIBRARY_PATH
+```
+
+Without `WM_ARCH`/`WM_COMPILER`, wmake preprocesses `Make/options` without
+`-traditional-cpp` and fails with `missing separator`. The preCICE install
+(`~/venv`, built with GCC 14) requires a matching libstdc++ at
+link/`ldd -r` check time: prepend `/scratch/app/gcc/14.2.0/lib64` to
+`LD_LIBRARY_PATH` or the adapter's `Allwmake` reports undefined
+`GLIBCXX_3.4.32`/`CXXABI_1.3.15` symbols.
+
 ## Testing
 
 **No automated test suite.** Validation is manual — run a real OpenFOAM case
