@@ -177,6 +177,13 @@ class solidBodyDisplacementLaplacianZoneFvMotionSolver
         //- Threshold for identifying overset hole cells (cellMask < this)
         static constexpr scalar holeCellThreshold_ = 0.5;
 
+        //- Distance over which displacement decays smoothly to zero
+        //  near the specified patches (0 = feature disabled)
+        scalar displacementDecayDistance_;
+
+        //- Patch names near which displacement is decayed (supports regex)
+        wordRes displacementDecayPatches_;
+
 
     // Private Member Functions
 
