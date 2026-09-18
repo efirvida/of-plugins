@@ -7,6 +7,12 @@
 ![OpenFOAM v2306](https://img.shields.io/badge/OpenFOAM-v2306-brightgreen.svg)
 ![OpenFOAM v2212](https://img.shields.io/badge/OpenFOAM-v2212-brightgreen.svg)
 
+> **Vendored fork** — this directory is an independent copy of
+> [turbinesFoam/turbinesFoam](https://github.com/turbinesFoam/turbinesFoam),
+> included as a plugin base for research development.  The original git
+> history was stripped and upstream changes are not tracked automatically.
+> Licence: GPL-3.0 (see `LICENSE`).
+
 turbinesFoam is a library for simulating wind and marine hydrokinetic turbines
 in OpenFOAM using the actuator line method.
 
@@ -17,22 +23,17 @@ Be sure to check out the
 
 ## Installation
 
-### Docker
-
-Spin up an interactive shell with:
-
-```sh
-docker run --rm -it -v $PWD:/work ghcr.io/turbinesfoam/turbinesfoam
-```
-
 ### Compile from source
 
 ```sh
 cd $WM_PROJECT_USER_DIR
-git clone https://github.com/turbinesFoam/turbinesFoam.git
-cd turbinesFoam
+git clone https://github.com/efirvida/of-plugins.git
+cd of-plugins/turbinesFoam
 ./Allwmake
 ```
+
+or, from the repository root, `./Allwmake` builds this plugin together with
+the other of-plugins libraries.
 
 ## Usage
 

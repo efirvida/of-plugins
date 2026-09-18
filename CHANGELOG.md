@@ -93,7 +93,8 @@ repository uses git submodules and its own git history.
 directory:
 - Full upstream tree imported (`src/`, `tutorials/`, `tests/`,
   `foamStyleCheck/`) with its original GPL-3.0 license preserved
-- Original git history removed (independent fork)
+- Original git history removed (independent fork); Docker packaging
+  (`Dockerfile` and Docker install instructions) dropped
 - `foamStyleCheck` (upstream git submodule) vendored as plain files —
   the repository remains submodule-free
 - Root `Allwmake` builds `libturbinesFoam.so`; root `Allclean` invokes
