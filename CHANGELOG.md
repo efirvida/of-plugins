@@ -91,12 +91,12 @@ repository uses git submodules and its own git history.
 
 **Solution:** Vendored the upstream codebase as an independent plugin
 directory:
-- Full upstream tree imported (`src/`, `tutorials/`, `tests/`,
-  `foamStyleCheck/`) with its original GPL-3.0 license preserved
+- Full upstream tree imported (`src/`, `tutorials/`, `tests/`) with its
+  original GPL-3.0 license preserved
 - Original git history removed (independent fork); Docker packaging
   (`Dockerfile` and Docker install instructions) dropped
-- `foamStyleCheck` (upstream git submodule) vendored as plain files —
-  the repository remains submodule-free
+- Upstream style checker `foamStyleCheck` removed (community vera++ tool,
+  not an official OpenFOAM formatter) — the repository remains submodule-free
 - Root `Allwmake` builds `libturbinesFoam.so`; root `Allclean` invokes
   the upstream-named `Allwclean` script
 

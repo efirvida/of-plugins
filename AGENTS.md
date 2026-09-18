@@ -18,9 +18,9 @@ The adapter is an FSI-only fork of the upstream preCICE adapter: coupling
 modules live in `precice-openfoam-adapter/modules/FSI/` and
 `modules/generic/` (`Stress` and `DisplacementDelta` modules were removed).
 `turbinesFoam/` is a vendored copy of turbinesFoam/turbinesFoam with its
-git history removed and its former `foamStyleCheck` submodule flattened
-into plain files — it builds `libturbinesFoam` and cleans via `Allwclean`
-(upstream name).
+git history removed and its upstream `foamStyleCheck` checker dropped
+(community vera++ tool, not an official formatter) — it builds
+`libturbinesFoam` and cleans via `Allwclean` (upstream name).
 
 Built library names (loaded via `libs (...)` in `controlDict`):
 `libsolidBodyDisplacementLaplacianZoneFvMotionSolver`,

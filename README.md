@@ -36,7 +36,8 @@ No submodules are used. All code is self-contained and built with `wmake`.
   - **Vendored independent fork** of [turbinesFoam/turbinesFoam](https://github.com/turbinesFoam/turbinesFoam)
     (actuator line method for wind and marine turbines).
   - Original git history stripped; included as a base for research development.
-  - `foamStyleCheck` (formerly a git submodule) vendored as plain files.
+  - Upstream `foamStyleCheck` tool removed (community vera++ checker, not an
+    official OpenFOAM formatter) — the repository remains submodule-free.
   - See [turbinesFoam/README.md](turbinesFoam/README.md) for original documentation.
 
 ## FSI Motion Model
