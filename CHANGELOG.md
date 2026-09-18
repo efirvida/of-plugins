@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — 2026-04-01
+## [Unreleased] — 2026-04-02
 
 ### New Features
 
@@ -39,6 +39,43 @@ Where:
 - `0.05` — decay distance (metres): distance from AMI where D ramps 0 → 1
 - `(AMI.*)` — patch name regex matching the AMI boundaries
 - `quadratic inverseDistance (blade)` — any existing motionDiffusivity chain
+
+#### 2. Add `displacementDecay` post-solve clamping for AMI meshes
+
+**Files:**
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+- `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.H`
+
+**Problem:** After the Laplacian solve, the cyclicAMI boundary condition
+interpolates non-zero displacement from the coupled side back onto AMI
+points during `correctBoundaryConditions()`, overriding the `boundaryDecay`
+protection.  Residual displacement reaches the AMI interface, degrading
+the AMI weights (minimum weights dropping to 0) and eventually causing
+floating-point exceptions.
+
+**Solution:** New optional `displacementDecay` sub-dictionary in
+`solidBodyDisplacementLaplacianZoneCoeffs`:
+
+```
+displacementDecay
+{
+    distance  0.05;      // decay length (m)
+    patches   (AMI.*);   // regex matching the AMI patches
+}
+```
+
+The clamp is applied **after** `correctBoundaryConditions()` in
+`curPoints()` and after the solve in `solve()`, so the cyclicAMI BC cannot
+reintroduce non-zero displacement at the interface:
+1. Points/cells **outside** the rotation zone: displacement set to exactly
+   zero (no gradual decay), preventing any residual displacement from
+   reaching the outer domain through the Laplacian solve
+2. Points/cells **inside** the zone: quintic smooth-step (C²) decay over
+   `distance`, measured from the selected patches with `patchWave`
+3. AMI patch boundary fields are explicitly zeroed
+
+The feature is skipped entirely when `moveAllCells` is active (no zone
+selected).
 
 ---
 
@@ -114,6 +151,20 @@ Skip boundary faces (`!isInternalFace`), and use owner/neighbour to find the
 correct adjacent cell.  Also removed a spurious `cellDisplacement_ = zero`
 reset in `curPoints()` that was clearing the solved displacement field.
 
+#### 5. Sync processor-boundary point positions in `curPoints()`
+
+**File:** `solidBodyDisplacementLaplacianZone/solidBodyDisplacementLaplacianZoneFvMotionSolver.C`
+
+**Problem:** After computing zone-rotated + elastically-deformed point
+positions, processor-shared points can have tiny inconsistencies between
+neighbouring ranks (~0.01–0.03% face-area mismatch), causing
+`FOAM FATAL ERROR: face area does not match neighbour by ...%` on
+processor patches during `calcGeometry()`.
+
+**Fix:** When running in parallel, average the computed `curPoints` across
+processor boundaries with `syncTools::syncPointList()` (sum plus count
+normalisation) before returning them.
+
 ---
 
 ### Code Quality & Maintainability
@@ -162,7 +213,9 @@ reset in `curPoints()` that was clearing the solved displacement field.
 
 **Changes:**
 - Register created field with Time registry via `checkIn()` (preCICE adapter can now find it)
-- Guard `Info<<` output with `debug` flag (was flooding logs every timestep)
+- Guard field discovery/creation `Info<<` messages with `debug` flag
+- Keep omega/rpm logging in `value()`/`integrate()` unconditional
+  (deliberate, for FSI debugging)
 - Validate `fieldName_` not empty in `read()`
 - Fix copy constructor: share field pointer (shallow copy) instead of creating disconnected instance
 

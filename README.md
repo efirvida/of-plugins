@@ -84,12 +84,49 @@ diffusivity  boundaryDecay 0.05 (AMI.*) quadratic inverseDistance (blade);
 | patchNames | `(AMI.*)` | Regex matching AMI boundary patches |
 | baseDiffusivity | `quadratic inverseDistance (blade)` | Any existing motionDiffusivity chain |
 
-The decay factor uses a Hermite smooth-step (`3x^2 - 2x^3`) to ensure C1
-continuity at both ends of the transition.
+The decay factor uses a quintic smooth-step (`6x^5 - 15x^4 + 10x^3`) to ensure
+C2 continuity (zero first and second derivatives) at both ends of the transition.
+
+### AMI displacement clamping: `displacementDecay`
+
+`boundaryDecay` prevents deformation from *reaching* the AMI, but the
+cyclicAMI boundary condition can still interpolate non-zero displacement
+back onto AMI points during `correctBoundaryConditions()`.  The optional
+`displacementDecay` sub-dictionary clamps the solved displacement as a
+post-processing step, guaranteeing zero motion at the interface:
+
+```
+patch AMI          decayDistance          interior
+   |                   |
+   |  U=0  --quintic--  U=U_solved
+   |                   |
+```
+
+```c++
+displacementDecay
+{
+    distance  0.05;      // decay length (m)
+    patches   (AMI.*);   // regex matching AMI boundary patches
+}
+```
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| distance | `0.05` | Distance (m) from the patches where displacement ramps 0 → 1 |
+| patches | `(AMI.*)` | Regex matching the patches near which to clamp |
+
+Behaviour:
+- Points/cells **outside** the rotation zone: displacement set to exactly zero
+- Points/cells **inside** the zone: quintic smooth-step (`6x^5 - 15x^4 + 10x^3`,
+  C2 continuous) decay over `distance` measured from the patches via `patchWave`
+- Applied after `correctBoundaryConditions()` in `curPoints()` and after the
+  solve in `solve()`, so cyclicAMI interpolation cannot reintroduce non-zero
+  displacement at the interface
+- Skipped when no zone is selected (`moveAllCells` mode)
 
 ## Requirements
 
-- OpenFOAM (tested with OpenFOAM.com line, v2406–v2506)
+- OpenFOAM (tested with OpenFOAM.com line, v2406–v2512)
 - Standard OpenFOAM build environment loaded:
   - `WM_PROJECT_DIR`
   - `FOAM_USER_LIBBIN`
@@ -106,11 +143,13 @@ From repository root:
 ./Allwmake
 ```
 
-This builds the three motion-related libraries:
+This builds all four plugins:
 
 - `libsolidBodyDisplacementLaplacianZoneFvMotionSolver.so`
 - `libdynamicOversetZoneDisplacementFvMesh.so`
 - `libfsiOmega.so`
+- `libpreciceAdapterFunctionObject.so` (adapter — warns but continues if
+  preCICE's `pkg-config` file is missing)
 
 into `FOAM_USER_LIBBIN`.
 
@@ -167,6 +206,13 @@ solidBodyDisplacementLaplacianZoneCoeffs
 
     // For AMI meshes, wrap with boundaryDecay to protect the interface:
     // diffusivity boundaryDecay 0.05 (AMI.*) quadratic inverseDistance (rotorTip);
+
+    // Optionally clamp displacement near the AMI after the solve:
+    // displacementDecay
+    // {
+    //     distance 0.05;
+    //     patches (AMI.*);
+    // }
 }
 ```
 
@@ -206,11 +252,11 @@ preciceOmegaCoeffs
 
 ### With overset meshes:
 
-Same as above, but in a `dynamicOversetMotionSolverFvMesh` configuration.
+Same as above, but in a `dynamicOversetZoneDisplacementFvMesh` configuration.
 In `controlDict` add:
 
 ```c++
-libs (overset fvMotionSolvers dynamicOversetMotionSolverFvMesh);
+libs (overset fvMotionSolvers dynamicOversetZoneDisplacementFvMesh);
 ```
 
 Ensure your adapter configuration uses the same field name
@@ -259,6 +305,13 @@ solidBodyDisplacementLaplacianZoneCoeffs
     }
 
     diffusivity inverseDistance (propellerTip);
+
+    // Optionally clamp displacement near the AMI after the solve:
+    // displacementDecay
+    // {
+    //     distance 0.05;
+    //     patches (AMI.*);
+    // }
 }
 ```
 
