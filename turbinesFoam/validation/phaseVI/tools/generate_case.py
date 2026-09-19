@@ -353,12 +353,12 @@ def render_field_uniform(cfg: dict[str, Any], speed: str, field: str) -> str:
     """0.org field dictionaries (uniform inflow, symmetry far field)."""
     velocity = float(speed)
     fields = inflow_fields(cfg, speed)
-    far = "    {field} {{ type symmetryPlane; }}"
+    far = "        type symmetryPlane;"
     if field == "U":
         dims = "[0 1 -1 0 0 0 0]"
         header = "volVectorField"
         internal = f"uniform ({velocity:.8g} 0 0)"
-        inlet = f"value uniform ({velocity:.8g} 0 0)"
+        inlet = f"type fixedValue;\n        value uniform ({velocity:.8g} 0 0);"
         outlet = (
             "type inletOutlet;\n"
             "        inletValue uniform (0 0 0);\n"
@@ -406,7 +406,7 @@ def render_field_uniform(cfg: dict[str, Any], speed: str, field: str) -> str:
         raise ValueError(f"unknown field {field!r}")
 
     far_block = "\n".join(
-        f"    {name}\n    {{\n{far.format(field=field)}\n    }}"
+        f"    {name}\n    {{\n{far}\n    }}"
         for name in ("bottom", "top", "sideMinus", "sidePlus")
     )
     return foam_header(field, header) + f"""dimensions      {dims};

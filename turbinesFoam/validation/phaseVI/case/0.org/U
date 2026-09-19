@@ -22,7 +22,8 @@ boundaryField
 {
     inlet
     {
-        value uniform (7 0 0)
+        type fixedValue;
+        value uniform (7 0 0);
     }
 
     outlet
@@ -34,18 +35,18 @@ boundaryField
 
     bottom
     {
-    U { type symmetryPlane; }
+        type symmetryPlane;
     }
     top
     {
-    U { type symmetryPlane; }
+        type symmetryPlane;
     }
     sideMinus
     {
-    U { type symmetryPlane; }
+        type symmetryPlane;
     }
     sidePlus
     {
-    U { type symmetryPlane; }
+        type symmetryPlane;
     }
 }

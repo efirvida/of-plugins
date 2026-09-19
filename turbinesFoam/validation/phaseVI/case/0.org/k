@@ -35,18 +35,18 @@ boundaryField
 
     bottom
     {
-    k { type symmetryPlane; }
+        type symmetryPlane;
     }
     top
     {
-    k { type symmetryPlane; }
+        type symmetryPlane;
     }
     sideMinus
     {
-    k { type symmetryPlane; }
+        type symmetryPlane;
     }
     sidePlus
     {
-    k { type symmetryPlane; }
+        type symmetryPlane;
     }
 }
