@@ -4,8 +4,11 @@
 # development queue (sequana_cpu_dev, 20 min). This is the only job of this
 # change that may be submitted; Stages 1-3 stay prepared-only.
 #
-# Submit from anywhere with:
-#   sbatch turbinesFoam/validation/phaseVI/scripts/slurm/stage0.slurm
+# Submit from the validation package directory (the package is resolved from
+# $SLURM_SUBMIT_DIR because Slurm runs a spooled copy of this script):
+#   cd turbinesFoam/validation/phaseVI
+#   sbatch scripts/slurm/stage0.slurm [--mesh-only|--runs-only]
+# or, equivalently, scripts/stage0.sh --submit.
 #SBATCH -p sequana_cpu_dev
 #SBATCH --ntasks=48
 #SBATCH --nodes=1
@@ -37,15 +40,29 @@ set -eu
 export FOAM_USER_LIBBIN=$WM_PROJECT_USER_DIR/platforms/$WM_OPTIONS/lib
 export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib/sys-openmpi:$LD_LIBRARY_PATH
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-job_dir="$(cd "$script_dir/../.." && pwd)"
+# Slurm spools the submitted script into /var/spool/slurmd/<job>/ and executes
+# that copy, so BASH_SOURCE[0] points outside the repository and cannot locate
+# the validation package. $SLURM_SUBMIT_DIR is the directory sbatch was invoked
+# from (the package dir when submitting from turbinesFoam/validation/phaseVI);
+# PHASEVI_PKG_DIR overrides it for direct execution. Extra arguments are
+# forwarded to stage0.sh (e.g. --mesh-only / --runs-only to split Stage 0 under
+# the 20 min development-queue limit).
+pkg_dir="${PHASEVI_PKG_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
+stage0="$pkg_dir/scripts/stage0.sh"
+if [ ! -x "$stage0" ]; then
+    echo "ERROR: Stage 0 driver not found: $stage0" >&2
+    echo "  Submit from the validation package directory:" >&2
+    echo "    cd turbinesFoam/validation/phaseVI" >&2
+    echo "    sbatch scripts/slurm/stage0.slurm" >&2
+    exit 3
+fi
 
 echo "Stage 0 on $(hostname); submit dir: ${SLURM_SUBMIT_DIR:-unset}"
-echo "Validation package: $job_dir"
+echo "Validation package: $pkg_dir"
 
 if [ "${SLURM_PROCID:-0}" -eq 0 ]; then
-    cd "$job_dir"
-    "${script_dir}/../stage0.sh" --execute
+    cd "$pkg_dir"
+    "$stage0" --execute "$@"
 fi
 
 wait

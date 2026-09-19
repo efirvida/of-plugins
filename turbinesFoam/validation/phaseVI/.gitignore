@@ -14,6 +14,10 @@ case/mesh.info
 runs/
 results/
 
+# Slurm job logs (%j.out / %j.err written next to the submit directory)
+[0-9]*.out
+[0-9]*.err
+
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
