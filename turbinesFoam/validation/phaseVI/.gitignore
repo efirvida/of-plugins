@@ -1,0 +1,20 @@
+# Generated meshes, time directories, post-processing and run artefacts.
+# The rendered dictionaries themselves ARE committed (reviewable twins).
+case/0/
+case/[1-9]*/
+case/processor*/
+case/constant/polyMesh/
+case/postProcessing/
+case/postProcessing-*/
+case/dynamicCode/
+case/log.*
+case/mesh.info
+
+# Run directories and comparison output
+runs/
+results/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/

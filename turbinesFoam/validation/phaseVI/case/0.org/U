@@ -1,0 +1,51 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Website:  www.openfoam.com                      |
+|   \\  /    A nd           |                                                 |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volVectorField;
+    object      U;
+}
+// Generated from config/case.yaml. Do not edit by hand.
+
+dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform (7 0 0);
+
+boundaryField
+{
+    inlet
+    {
+        value uniform (7 0 0)
+    }
+
+    outlet
+    {
+        type inletOutlet;
+        inletValue uniform (0 0 0);
+        value uniform (7 0 0);
+    }
+
+    bottom
+    {
+    U { type symmetryPlane; }
+    }
+    top
+    {
+    U { type symmetryPlane; }
+    }
+    sideMinus
+    {
+    U { type symmetryPlane; }
+    }
+    sidePlus
+    {
+    U { type symmetryPlane; }
+    }
+}
