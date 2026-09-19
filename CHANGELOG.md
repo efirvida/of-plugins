@@ -192,6 +192,59 @@ gate against launching costly runs with a mirrored rotation/pitch convention.
 
 ---
 
+#### 7. Add Stage 3 tooling: IDDES variant, `nChordwise`/ranks overrides, prepared arrays
+
+**Files:**
+- `turbinesFoam/validation/phaseVI/config/case.yaml`
+- `turbinesFoam/validation/phaseVI/tools/case_config.py`
+- `turbinesFoam/validation/phaseVI/tools/generate_case.py`
+- `turbinesFoam/validation/phaseVI/scripts/runPhaseVI.sh`
+- `turbinesFoam/validation/phaseVI/scripts/slurm/stage3.slurm` (new)
+- `turbinesFoam/validation/phaseVI/scripts/slurm/stage3-d64.slurm` (new)
+- `turbinesFoam/tests/test_phasevi_case.py`
+- `turbinesFoam/validation/phaseVI/README.md`, `CHANGELOG.md` (updated)
+
+**Problem:** The NREL Phase VI package declared the Stage 3 plan in
+`config/case.yaml` (`iddes_model: kOmegaSSTIDDES`, the `stage3` block with
+`n_chordwise: [1, 3, 5]` and the `ultra` mesh) but the tooling ignored it:
+`generate_case.py` hardcoded `simulationType RAS; RASModel kOmegaSST;`, the
+runner had no `nChordwise` or rank-count override, and Stage 3 had no Slurm
+job — only the 48-rank single-node production array existed.
+
+**Fix:**
+1. `config/case.yaml` gains an `iddes:` block (`delta: IDDESDelta`,
+   `delta_Cw: 0.15`, `delta_t: 0.0025`, `div_phi_U: Gauss linear`,
+   `wall_dist_n_required: true`). `IDDESDelta` is mandatory: OpenFOAM.com
+   v2506 `kOmegaSSTIDDES::setDelta()` aborts for `cubeRootVol` and any other
+   `LESdelta` model (verified against the installed v2506 sources; the SAL
+   scaffold's `delta IDDESDelta` confirms the syntax).
+2. `generate_case.py` gains `--solver urans|iddes` (renders
+   `simulationType LES; LESModel kOmegaSSTIDDES; delta IDDESDelta` plus the
+   DES `deltaT 0.0025`, keeping the tip-displacement assertion),
+   `--n-chordwise N` (ASM twin only) and `--ranks N`
+   (`decomposeParDict numberOfSubdomains`). `case_config.py` validates the
+   `iddes:` block, exposes `solver_delta_t()`/`check_solver()` and threads the
+   solver through `kinematics()` and the `--select` CLI.
+3. `runPhaseVI.sh` gains `--solver`, `--nchordwise` (rejected for ALM) and
+   `--ranks`; run ids gain `-iddes`/`-nc<N>` suffixes, `run.json` records
+   `solver`, `n_chordwise` and `ranks`, and inside Slurm a `--ranks` that
+   differs from `SLURM_NTASKS` fails with exit 2. `--submit` refuses the new
+   Stage 3 flags (Stage 3 has its own arrays).
+4. Two prepared-only arrays, guarded by `PHASEVI_LONG_QUEUE_AUTHORIZED=1` and
+   resolved from `$SLURM_SUBMIT_DIR` (never `BASH_SOURCE`):
+   `slurm/stage3.slurm` (4 nodes / 192 ranks, 96 h, 6 tasks: IDDES ALM/ASM on
+   coarse+fine and ASM `nChordwise` 1/3 on fine, all at 7 m/s) and
+   `slurm/stage3-d64.slurm` (8 nodes / 384 ranks, 96 h, ALM/ASM ultra URANS at
+   7 m/s, `--restart` to allow chaining). At 48 ranks one D/64 run would need
+   ~194 h; at 384 ranks it fits in a single 96 h task.
+5. Tests cover the IDDES render (`LESModel kOmegaSSTIDDES`, `deltaT 0.0025`,
+   scheme/wallDist overrides, tip constraint per mesh), the `--n-chordwise 1`
+   override, the `--ranks 192` render, the CLI end-to-end render into a temp
+   directory, and the invalid-`delta` rejection. `--check` on the committed
+   default case is unchanged and still passes.
+
+---
+
 ### Bug Fixes (FSI Physics)
 
 #### 1. Remove ghost time directories from implicit coupling sub-iterations

@@ -16,7 +16,9 @@ turbulence, no external inflow preprocessing):
 Boundary conditions: uniform velocity inlet, pressure outlet, symmetry far
 field. Solver: `pimpleFoam` + `kOmegaSST` URANS, `adjustTimeStep off` with a
 fixed time step (D/32 0.008 s, D/48 0.005 s, D/64 0.004 s) chosen so the blade
-tip moves less than the hub-adjacent cell per step. The full design and
+tip moves less than the hub-adjacent cell per step. The optional Stage 3
+variant (`--solver iddes`) switches to LES `kOmegaSSTIDDES` with a fixed
+0.0025 s step (see "IDDES variant"). The full design and
 requirements live in `openspec/changes/phase-vi-validation/` of the
 `of-plugins` repository; the data sources and their sha256 are recorded in the
 per-directory `PROVENANCE.md` files.
@@ -33,6 +35,8 @@ data/                     geometry, polars, experiment + PROVENANCE per dir
 scripts/                  runners, mesh/stage tooling, comparison
   slurm/stage0.slurm      authorized development-queue job
   slurm/production.slurm  prepared-only long-queue array (do not submit)
+  slurm/stage3.slurm      prepared-only IDDES + nChordwise array (do not submit)
+  slurm/stage3-d64.slurm  prepared-only D/64 sensitivity array (do not submit)
 runs/                     rendered run directories (gitignored)
 results/                  comparison output (gitignored)
 ```
@@ -67,7 +71,8 @@ python3 tools/generate_case.py --check    # exit 1 on missing/stale, never write
 
 `--mesh coarse|fine|ultra`, `--speed <7|10|13|15|20|25>`,
 `--domain long|squat`, `--sequence H|S`, `--profile production|smoke`,
-`--case-dir DIR`, `--end-revs FLOAT`, `--start-from startTime|latestTime`.
+`--solver urans|iddes`, `--n-chordwise N`, `--ranks N`, `--case-dir DIR`,
+`--end-revs FLOAT`, `--start-from startTime|latestTime`.
 Rendered files carry a "Generated from config/case.yaml" banner; `case/` is
 the only committed copy and hand edits are detected by `--check`.
 
@@ -88,30 +93,56 @@ refines z like x/y); recorded in `design.md` §5 and `config/case.yaml`.
 
 ```sh
 scripts/runPhaseVI.sh -m alm|asm -u <speed> [-mesh coarse|fine|ultra]
-                      [--domain long|squat] [-s H|S] [--stage0] [--restart]
+                      [--domain long|squat] [-s H|S] [--solver urans|iddes]
+                      [--nchordwise N] [--ranks N] [--stage0] [--restart]
                       [--run] [--submit]
 ```
 
-The runner validates the (model, speed, mesh, sequence) combination through
-`tools/case_config.py`, renders the case into `runs/<model>-U<speed>-<mesh>`
-(for example `runs/asm-U7-coarse-s0`), installs the selected `fvOptions` twin
-as `system/fvOptions`, hardlinks the shared `runs/mesh-<mesh>/constant/polyMesh`,
-and writes `run.json` (git commit, OpenFOAM version, config sha256, variant,
-start time). The committed `case/` skeleton is never modified.
+The runner validates the (model, speed, mesh, sequence, solver) combination
+through `tools/case_config.py`, renders the case into
+`runs/<model>-U<speed>-<mesh>` (for example `runs/asm-U7-coarse-s0`),
+installs the selected `fvOptions` twin as `system/fvOptions`, hardlinks the
+shared `runs/mesh-<mesh>/constant/polyMesh`, and writes `run.json` (git
+commit, OpenFOAM version, config sha256, variant, solver, `n_chordwise`,
+`ranks`, start time). The committed `case/` skeleton is never modified.
 
 - `--restart` sets `startFrom latestTime` when a written time exists (otherwise
-  it warns and keeps `startTime`); `production.slurm` uses it for requeues.
+  it warns and keeps `startTime`); the production and Stage 3 arrays use it for
+  requeues.
 - `--stage0` caps `endTime` at 0.25 revolutions (spec bound ≤ 0.3) so a 48-rank
   job fits the 20-minute `sequana_cpu_dev` partition.
+- `--solver iddes` renders the Stage 3 LES `kOmegaSSTIDDES` variant (see
+  below) and appends `-iddes` to the run id.
+- `--nchordwise N` overrides the ASM chordwise strip count (ASM only; rejected
+  for ALM) and appends `-ncN`; the configured default is 5.
+- `--ranks N` overrides `decomposition.number_of_subdomains` in the rendered
+  `decomposeParDict` and for `mpirun -np`; inside a Slurm allocation the runner
+  fails (exit 2) unless `N == SLURM_NTASKS`.
 - `--run` executes `decomposePar -force` and
-  `mpirun -np <decomposeParDict> pimpleFoam -parallel` (inside a Slurm
-  allocation; 48 subdomains by default).
+  `mpirun -np <ranks> pimpleFoam -parallel` (inside a Slurm allocation;
+  48 subdomains by default).
 - `--submit` with `--stage0` submits `slurm/stage0.slurm` to the development
   queue. Without `--stage0` it requires `PHASEVI_LONG_QUEUE_AUTHORIZED=1`
-  **and** a passing `results/U7-H/sign_gate.json`; otherwise it exits 5.
+  **and** a passing `results/U7-H/sign_gate.json`; otherwise it exits 5. It
+  refuses to carry `--solver iddes`, `--nchordwise` or `--ranks` (Stage 3 has
+  its own prepared arrays).
 
-Exit codes: **2** unsupported input, **3** environment/mesh/solver failure,
-**4** stale generated case, **5** authorization or sign-gate failure.
+Exit codes: **2** unsupported input (including a `--ranks`/`SLURM_NTASKS`
+mismatch), **3** environment/mesh/solver failure, **4** stale generated case,
+**5** authorization or sign-gate failure.
+
+### IDDES variant
+
+`--solver iddes` switches `constant/turbulenceProperties` to
+`simulationType LES` with `LESModel kOmegaSSTIDDES` and `delta IDDESDelta`
+(`IDDESDeltaCoeffs { Cw 0.15; }`), the only LES delta `kOmegaSSTIDDES` accepts
+in OpenFOAM.com v2506. The `iddes:` block of `config/case.yaml` also carries
+the DES-appropriate `div(phi,U) Gauss linear` scheme, `wallDist { nRequired
+true; }` (`IDDESDelta` reads the wall-normal vectors) and the fixed DES time
+step **0.0025 s** on every mesh — still below the tip-displacement bound
+(37.856 m/s × 0.0025 s = 0.0946 m < 0.1572 m, the D/64 hub-adjacent cell).
+The tip-displacement assertion runs against the selected time step, so the
+`--solver iddes` render is validated like the URANS one.
 
 ### Meshes and Stage 0
 
@@ -134,14 +165,35 @@ hexahedra, non-orthogonality ≤ 1e-10 and the cell count inside the band from
 | 0 | `checkMesh` D/32 + D/48; ALM+ASM 7 m/s D/32, ≤ 0.3 rev | `sequana_cpu_dev` | authorized |
 | 1 | 7 m/s URANS ALM+ASM, D/32 first then D/48 | long | prepared |
 | 2 | {10, 13, 15, 25} m/s ALM+ASM + Sequence S 7 m/s repeat | long | prepared |
-| 3 | optional IDDES, `nChordwise` {1, 3, 5} at D/48, D/64 sensitivity | long | prepared |
+| 3 | IDDES ALM+ASM D/32+D/48, ASM `nChordwise` {1, 3} D/48, D/64 ALM+ASM sensitivity | long | prepared |
 
 Stages 1–3 are prepared but **must not be submitted** until the long-queue
 authorization is granted. 20 m/s stays renderable but is deliberately not
 staged, so no blanket job array can pick it up. `slurm/production.slurm` is a
 **prepared-only** array: one task per (model, speed, mesh, sequence), 48 ranks,
-≤ 24 h per task, restart from `latestTime`. It refuses to run without
+≤ 96 h per task, restart from `latestTime`. It refuses to run without
 `PHASEVI_LONG_QUEUE_AUTHORIZED=1`, and no script submits it automatically.
+
+### Stage 3 arrays (prepared only)
+
+Two prepared-only arrays cover Stage 3; both refuse to run without
+`PHASEVI_LONG_QUEUE_AUTHORIZED=1` and resolve the package from
+`$SLURM_SUBMIT_DIR` (Slurm spools the script, so `BASH_SOURCE` is not usable —
+same fix as `stage0.slurm`/`production.slurm`). Submit them from the package
+directory with `sbatch scripts/slurm/stage3.slurm` (or `stage3-d64.slurm`).
+
+| Job | Nodes / ranks | Wall time | Array |
+|---|---|---|---|
+| `slurm/stage3.slurm` | 4 / 192 | 96 h | 6 tasks: IDDES ALM+ASM on coarse and fine, plus ASM URANS `nChordwise` 1 and 3 on fine (7 m/s, `--restart`) |
+| `slurm/stage3-d64.slurm` | 8 / 384 | 96 h | 2 tasks: ALM and ASM URANS on ultra (D/64) at 7 m/s, `--restart` so a task can be chained if the wall time is ever exhausted |
+
+Every task passes `--ranks <ntasks>`, so the rendered `decomposeParDict` and
+`mpirun -np` match the allocation (the runner fails otherwise). The multi-node
+sizes are required by the mesh/step combination, not by throughput alone: the
+D/48 IDDES runs and the D/64 URANS runs are roughly an order of magnitude
+heavier than the 48-rank Stage 1 jobs. At 48 ranks a single D/64 run would need
+about 194 h, so the D/64 array runs at 384 ranks (8×), which fits comfortably
+in one 96 h task.
 
 ## Comparison
 
