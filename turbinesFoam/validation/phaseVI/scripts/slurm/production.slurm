@@ -1,12 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# PREPARED ONLY - do not submit until the long-queue authorization is granted.
-#
 # Stage 1+2 production array of the NREL Phase VI validation: one array task per
-# (model, speed, mesh) combination, 48 ranks, at most 24 h wall time, restart
-# from the latest written time. 20 m/s is deliberately absent (renderable but
-# not staged) so no blanket array can pick it up. Stage 3 (optional IDDES,
-# nChordwise sweep, D/64) is intentionally not in this array.
+# (model, speed, mesh, sequence) combination, 48 ranks, at most 96 h wall time
+# (maintainer-authorized), restart from the latest written time. 20 m/s is
+# deliberately absent (renderable but not staged) so no blanket array can pick
+# it up. Stage 3 (optional IDDES, nChordwise sweep, D/64) is intentionally not
+# in this array.
 #
 # Guarded by PHASEVI_LONG_QUEUE_AUTHORIZED=1; runPhaseVI.sh --submit enforces
 # the same gate.
@@ -14,7 +13,7 @@
 #SBATCH --ntasks=48
 #SBATCH --nodes=1
 #SBATCH -J phaseVI-prod
-#SBATCH --time=24:00:00
+#SBATCH --time=96:00:00
 #SBATCH --array=0-13
 #SBATCH -e %j.err
 #SBATCH -o %j.out
@@ -47,7 +46,14 @@ set -eu
 export FOAM_USER_LIBBIN=$WM_PROJECT_USER_DIR/platforms/$WM_OPTIONS/lib
 export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib/sys-openmpi:$LD_LIBRARY_PATH
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Slurm executes a spooled copy of this script (/var/spool/slurmd/...), so
+# BASH_SOURCE does not point into the repository; resolve the package from the
+# submission directory instead (same fix as stage0.slurm).
+pkg_dir="${PHASEVI_PKG_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
+if [ ! -x "${pkg_dir}/scripts/runPhaseVI.sh" ]; then
+    echo "ERROR: ${pkg_dir}/scripts/runPhaseVI.sh not found; submit from the package directory or set PHASEVI_PKG_DIR." >&2
+    exit 3
+fi
 
 # Stage 1: 7 m/s headline D/32 then D/48, both models.
 # Stage 2: {10,13,15,25} m/s at D/32 both models + Sequence S 7 m/s repeat.
@@ -73,7 +79,7 @@ IFS=':' read -r model speed mesh sequence <<< "$combo"
 
 echo "Array task ${SLURM_ARRAY_TASK_ID}: $combo on $(hostname)"
 
-"${script_dir}/../runPhaseVI.sh" -m "$model" -u "$speed" -mesh "$mesh" \
+"${pkg_dir}/scripts/runPhaseVI.sh" -m "$model" -u "$speed" -mesh "$mesh" \
     -s "$sequence" --restart --run
 
 echo "Array task ${SLURM_ARRAY_TASK_ID} finished"
