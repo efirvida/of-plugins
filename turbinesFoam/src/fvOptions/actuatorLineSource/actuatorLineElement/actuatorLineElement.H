@@ -144,6 +144,12 @@ protected:
         //- Profile name
         word profileName_;
 
+        //- Debug switch stored as a label: profileData and addedMassModel
+        //  keep `const label&` debug members, so passing the int debug
+        //  switch directly would bind them to an int-to-label conversion
+        //  temporary that dies at the end of the constructor
+        const label debugLevel_;
+
         //- Profile data (encapsulates coefficients)
         profileData profileData_;
 
@@ -220,7 +226,7 @@ protected:
         void lookupCoefficients();
 
         //- Calculate projection width epsilon
-        scalar calcProjectionEpsilon();
+        virtual scalar calcProjectionEpsilon();
 
         //- Correct for flow curvatue
         void correctFlowCurvature(scalar& angleOfAttackRad);
@@ -229,10 +235,10 @@ protected:
         void multiplyForceRho(const volScalarField& rho);
 
         //- Apply force field based on force vector
-        void applyForceField(volVectorField& forceField);
+        virtual void applyForceField(volVectorField& forceField);
 
         //- Get inflow velocity
-        void calculateInflowVelocity(const volVectorField& Uin);
+        virtual void calculateInflowVelocity(const volVectorField& Uin);
 
         //- Create the performance output file
         virtual void createOutputFile();
@@ -254,17 +260,23 @@ public:
             actuatorLineElement,
             dictionary,
             (
+                const word& name,
                 const dictionary& dict,
-                const word& modelName
+                const fvMesh& mesh
             ),
-            (dict, modelName)
+            (name, dict, mesh)
         );
 
 
     // Selectors
 
         //- Return a reference
-        static autoPtr<actuatorLineElement> New(const dictionary& dict);
+        static autoPtr<actuatorLineElement> New
+        (
+            const word& name,
+            const dictionary& dict,
+            const fvMesh& mesh
+        );
 
 
     //- Constructor

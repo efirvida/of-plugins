@@ -114,6 +114,82 @@ rotating machinery (coupling → mesh motion → rotation → loading).
 the coupled simulation, badges for OpenFOAM/preCICE/licence, and clearer
 plugin descriptions.  Technical usage sections unchanged.
 
+#### 5. Add blade actuator surface model (ASM) to turbinesFoam
+
+**Files:**
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/actuatorLineElement.{H,C}` (updated)
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/actuatorSurfaceElement.{H,C}` (new)
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineSource.C` (updated)
+- `turbinesFoam/src/Make/files` (updated)
+- `turbinesFoam/tutorials/axialFlowTurbineASM/` (new, incl. `compareALMvsASM.py`)
+- `turbinesFoam/tests/test_asm.py`, `tests/test_aftal_asm.py`, `tests/axialFlowTurbineASMSource/` (new)
+- `turbinesFoam/README.md`, `README.md` (updated)
+
+**Problem:** The actuator line model (ALM) samples the inflow at a single
+collocation point per radial station and ties the projection width to the
+chord (`epsilon = max(0.25*c, mesh)`), so it cannot resolve chordwise flow
+features and does not couple to meshes finer than the chord.
+
+**Solution:** Optional blade actuator surface element
+(`actuatorSurfaceElement`, Yang & Sotiropoulos, arXiv:1702.02108v4, Sec.
+2.1), selected per line/blade with `elementType actuatorSurfaceElement;`
+(+ optional `nChordwise`, default 5), that reuses the full inherited BEM
+force chain but:
+- averages the inflow over `nChordwise` equal chord strips (midpoint rule),
+- distributes the force uniformly across the strips
+  (`forceVector_/nChordwise` per strip, own Gaussian each), and
+- uses a mesh-only projection width `2*cbrt(V)*meshFactor`.
+
+The change completes the vestigial `actuatorLineElement` run-time
+selection table (`New` + `elementType` default) so the ALM path stays
+byte-identical when the key is absent.  Includes a HAWT ASM tutorial
+(copy of `axialFlowTurbineAL` with the ASM blade config and truncated
+`endTime`) and an ALM-vs-ASM comparison script, plus integration tests.
+Documented as HAWT-only; CFTAL/VAWT usage untested.
+
+---
+
+#### 6. Add NREL Phase VI validation package
+
+**Files:**
+- `turbinesFoam/validation/phaseVI/` (new: YAML config, generator, committed
+  `case/` skeleton, geometry/polars/experiment data with `PROVENANCE.md`,
+  runners, Slurm scripts, README)
+- `turbinesFoam/tests/test_phasevi_case.py`, `tests/test_phasevi_data.py`,
+  `tests/test_phasevi_compare.py`, `tests/conftest.py` (new/updated)
+- `README.md`, `CHANGELOG.md` (updated)
+
+**Problem:** The fork's ALM and ASM models had no shared, reproducible rotor
+validation case: earlier comparisons relied on scaffold data of unverified
+provenance (flipped `Cm` signs, suspect `Cd`), there was no way to reproduce
+the per-speed measured tip-speed ratio, no convergence/window contract, and no
+gate against launching costly runs with a mirrored rotation/pitch convention.
+
+**Fix:** Added the uniform-inflow NREL Phase VI package:
+1. `config/case.yaml` single source of truth for the 18-block hex mesh
+   (D/32 6,674,304 / D/48 22,525,776 / D/64 53,394,432 cells), fixed time step
+   with a tip-displacement assertion, per-speed measured TSR and the ALM/ASM
+   `fvOptions` twins; `tools/generate_case.py --check` detects stale renders
+   without writing.
+2. Committed geometry (TP-500-29955 Table A-1), polars (Tables A-3..A-8,
+   TP-442-7817) and WDH experimental rows with per-directory `PROVENANCE.md`
+   (DOI, source sha256, sheet/table, row rule, units, no PDF/XLS committed).
+3. `scripts/runPhaseVI.sh` / `mesh.sh` / `stage0.sh` / `check_environment.sh`
+   plus the Stage 0 development-queue job and the prepared-only 24 h
+   production array (restart from `latestTime`, refuses to submit without the
+   long-queue authorization and a passing 7 m/s sign gate).
+4. `scripts/comparePhaseVI.py` merges `postProcessing/turbines/0/turbine.csv`
+   and the element-level CSVs with the measured rows, averages revolutions
+   4-12, flags > 1 % drift, interpolates `c_ref_n`/`c_ref_t` at
+   30/47/63/80/95 % span, states the air density from `WTBARO`/`WTATEMP`,
+   prints the fixed F1 metric definitions and the modelling limitations, and
+   produces the sign gate that blocks production.
+5. Pure-Python pytest contracts for the case, data and comparison tooling
+   (cell counts, mesh blocks, twin diff, TSR, tip constraint, anchors,
+   provenance, F1 metric formulas, fail-loud exit codes, sign gate); the
+   OpenFOAM-driven upstream test modules are skipped automatically when no
+   OpenFOAM environment is loaded.
+
 ---
 
 ### Bug Fixes (FSI Physics)

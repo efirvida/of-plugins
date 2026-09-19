@@ -1,0 +1,26 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Website:  www.openfoam.com                      |
+|   \\  /    A nd           |                                                 |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      topoSetDict;
+}
+// Generated from config/case.yaml. Do not edit by hand.
+
+actions
+(
+    {
+        name turbine;
+        type cellSet;
+        action new;
+        source boxToCell;
+        box (-5.029 -10.058 2.134) (5.029 10.058 22.25);
+    }
+);

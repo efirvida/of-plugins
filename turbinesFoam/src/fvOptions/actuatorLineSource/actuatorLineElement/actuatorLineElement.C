@@ -42,6 +42,45 @@ namespace fv
 }
 
 
+// * * * * * * * * * * * * * * * * Selectors * * * * * * * * * * * * * * * * //
+
+Foam::autoPtr<Foam::fv::actuatorLineElement>
+Foam::fv::actuatorLineElement::New
+(
+    const word& name,
+    const dictionary& dict,
+    const fvMesh& mesh
+)
+{
+    // Select the concrete element type from the dictionary, defaulting to
+    // the base class so existing cases behave identically
+    const word elementType =
+        dict.lookupOrDefault<word>("elementType", actuatorLineElement::typeName);
+
+    if (elementType == actuatorLineElement::typeName)
+    {
+        return autoPtr<actuatorLineElement>
+        (
+            new actuatorLineElement(name, dict, mesh)
+        );
+    }
+
+    auto cstrIter = dictionaryConstructorTablePtr_->find(elementType);
+
+    if (cstrIter == dictionaryConstructorTablePtr_->end())
+    {
+        FatalErrorIn("actuatorLineElement::New(const word&, const dictionary&, const fvMesh&)")
+            << "Unknown actuator element type " << elementType
+            << nl << nl
+            << "Valid element types are :" << nl
+            << dictionaryConstructorTablePtr_->sortedToc()
+            << exit(FatalError);
+    }
+
+    return autoPtr<actuatorLineElement>(cstrIter()(name, dict, mesh));
+}
+
+
 // * * * * * * * * * * * * * Protected Member Functions  * * * * * * * * * * //
 
 void Foam::fv::actuatorLineElement::read()
@@ -527,7 +566,8 @@ Foam::fv::actuatorLineElement::actuatorLineElement
     dragCoefficient_(0.0),
     momentCoefficient_(0.0),
     profileName_(dict.lookup("profileName")),
-    profileData_(profileName_, dict.subDict("profileData"), debug),
+    debugLevel_(debug),
+    profileData_(profileName_, dict.subDict("profileData"), debugLevel_),
     dynamicStallActive_(false),
     omega_(0.0),
     chordMount_(0.25),
@@ -539,7 +579,7 @@ Foam::fv::actuatorLineElement::actuatorLineElement
     rootDistance_(0.0),
     endEffectFactor_(1.0),
     addedMassActive_(dict.lookupOrDefault("addedMass", false)),
-    addedMass_(mesh.time(), dict.lookupOrDefault("chordLength", 1.0), debug)
+    addedMass_(mesh.time(), dict.lookupOrDefault("chordLength", 1.0), debugLevel_)
 {
     meshBoundBox_.inflate(1e-6);
     read();

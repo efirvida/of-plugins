@@ -1,0 +1,184 @@
+# Single source of truth for the NREL Phase VI uniform-inflow validation case.
+#
+# The case is generated into `case/` by `tools/generate_case.py`; never edit
+# the generated files by hand (`generate_case.py --check` detects drift).
+#
+# Geometry: NREL/TP-500-29955 (DOI 10.2172/15000240), standard 5.029 m tip.
+# Kinematics: per-speed measured tip-speed ratios from the WDH workbooks
+# (`wt_loads_statistics.xls`, sheet `ldsmean`, 0 deg yaw, Sequence H).
+project:
+  name: phaseVI_uniform_inflow
+  openfoam_versions: [v2506, v2412]
+
+turbine:
+  diameter: 10.058
+  radius: 5.029
+  hub_height: 12.192
+  pitch_deg: 3.0
+  n_blades: 2
+  # ALM/ASM elements interpolated along the blade geometry stations.
+  n_elements: 50
+  axis: [-1.0, 0.0, 0.0]
+  vertical_direction: [0.0, 0.0, 1.0]
+  # epsilon = 2 * cbrt(cellVolume) * gaussian_mesh_factor.
+  gaussian_mesh_factor: 1.0
+  position_D: [0.0, 0.0]
+
+# Per-speed measured tip-speed ratio. `rpm` is informational (the rotor speed
+# is set through `tipSpeedRatio` in fvOptions); `row` names the canonical
+# `ldsmean` row the value was derived from.
+kinematics:
+  sequence: H
+  speeds:
+    7:
+      tsr: 5.408
+      rotor_speed_rpm: 71.878
+      row: h0700000
+    10:
+      tsr: 3.798
+      rotor_speed_rpm: 72.107
+      row: h1000000
+    13:
+      tsr: 2.920
+      rotor_speed_rpm: 72.091
+      row: h1300000
+    15:
+      tsr: 2.530
+      rotor_speed_rpm: 72.062
+      row: h1500000
+    20:
+      tsr: 1.898
+      rotor_speed_rpm: 72.084
+      row: h20m0000
+    25:
+      tsr: 1.521
+      rotor_speed_rpm: 72.208
+      row: h2500000
+
+# Sequence S repeat (s0700000): same rig, different blade set. The runner
+# selects it explicitly and only the comparison row differs.
+sequence_s:
+  speed: 7
+  tsr: 5.407
+  rotor_speed_rpm: 71.867
+  row: s0700000
+
+# Domain extents in rotor diameters. x/y are measured from the rotor plane and
+# rotor axis; z is an offset from the hub. The reference free box is
+# x in [-5D, 15D], y in [-4D, 4D], z in hub +- 2.5D (201 m x 80.5 m x 50.3 m).
+domain_D:
+  x: [-5.0, 15.0]
+  y: [-4.0, 4.0]
+  z_offset: [-2.5, 2.5]
+
+# Tighter fallback domain (15D x 6D x 6D). Selected with `--domain squat`.
+domain_squat_D:
+  x: [-5.0, 10.0]
+  y: [-3.0, 3.0]
+  z_offset: [-3.0, 3.0]
+
+# Block breaks shared by every resolution (x/y absolute D, z hub offset in D).
+# Cells and grading are per resolution; the hub-adjacent cell is the finest
+# cell in z because the split sits at the hub.
+mesh:
+  breaks_D:
+    x: [-5.0, -0.5, 8.0, 15.0]
+    y: [-4.0, -1.5, 1.5, 4.0]
+    z: [-2.5, 0.0, 2.5]
+  resolutions:
+    # D/32 development mesh: 6,674,304 cells.
+    coarse:
+      x: {cells: [50, 272, 60], grading: [0.160029, 1.0, 9.252929]}
+      y: {cells: [36, 96, 36], grading: [0.241240, 1.0, 4.145249]}
+      z: {cells: [52, 52], grading: [0.4464, 2.2404]}
+      delta_t: 0.008
+      target_cells: [6600000, 6800000]
+    # D/48 headline mesh: 22,525,776 cells.
+    fine:
+      x: {cells: [75, 408, 90], grading: [0.160029, 1.0, 9.252929]}
+      y: {cells: [54, 144, 54], grading: [0.241240, 1.0, 4.145249]}
+      z: {cells: [78, 78], grading: [0.4464, 2.2404]}
+      delta_t: 0.005
+      target_cells: [22400000, 22700000]
+    # D/64 optional sensitivity mesh: 53,394,432 cells.
+    ultra:
+      x: {cells: [100, 544, 120], grading: [0.160029, 1.0, 9.252929]}
+      y: {cells: [72, 192, 72], grading: [0.241240, 1.0, 4.145249]}
+      z: {cells: [104, 104], grading: [0.4464, 2.2404]}
+      delta_t: 0.004
+      target_cells: [53000000, 53800000]
+
+solver:
+  application: pimpleFoam
+  turbulence_model: kOmegaSST
+  iddes_model: kOmegaSSTIDDES
+  # Fixed time step ("adjustTimeStep off"): the tip displacement per step must
+  # stay below the hub-adjacent cell (validated in tools/case_config.py).
+  adjust_time_step: false
+  end_revolutions: 12
+  discard_revolutions: 4
+  write_interval_rev: 0.5
+  purge_write: 8
+
+inflow:
+  # Default speed; `--speed` selects the measured TSR per wind speed.
+  velocity: 7.0
+  turbulence_intensity: 0.005
+  mixing_length_D: 0.07
+  kinematic_viscosity: 1.5e-5
+
+decomposition:
+  number_of_subdomains: 48
+
+# Staged run plan (F3). Stage 0 is the only stage authorized to execute now
+# (development queue, <= 0.3 revolutions). Stages 1-3 are prepared but must
+# not be submitted until the long-queue authorization is granted. 20 m/s stays
+# renderable (kinematics above) but is deliberately NOT staged, so no blanket
+# job array can pick it up.
+stages:
+  stage0:
+    description: mesh + checkMesh D/32 and D/48; 7 m/s stability runs
+    queue: sequana_cpu_dev
+    max_revolutions: 0.3
+    speeds: [7]
+    meshes: [coarse, fine]
+    models: [alm, asm]
+    executes: true
+  stage1:
+    description: 7 m/s URANS headline, D/32 first then D/48
+    queue: sequana_cpu_long
+    models: [alm, asm]
+    meshes: [coarse, fine]
+    speeds: [7]
+    executes: false
+  stage2:
+    description: wind-speed extension and Sequence S repeat
+    queue: sequana_cpu_long
+    models: [alm, asm]
+    meshes: [coarse]
+    speeds: [10, 13, 15, 25]
+    sequence_s: true
+    executes: false
+  stage3:
+    description: optional IDDES confirmation, nChordwise sweep, D/64 sensitivity
+    queue: sequana_cpu_long
+    optional: true
+    iddes: true
+    models: [alm, asm]
+    meshes: [fine, ultra]
+    speeds: [7]
+    n_chordwise: [1, 3, 5]
+    n_chordwise_mesh: fine
+    executes: false
+
+actuator:
+  end_effects:
+    active: true
+    model: Glauert
+    tip: true
+    root: true
+  dynamic_stall:
+    active: false
+    model: LeishmanBeddoes
+  n_chordwise: 5
+  n_chordwise_sweep: [1, 3, 5]
