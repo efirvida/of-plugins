@@ -164,7 +164,7 @@ def render_toposet(cfg: dict[str, Any]) -> str:
     return foam_header("topoSetDict") + f"""actions
 (
     {{
-        name T1;
+        name turbine;
         type cellSet;
         action new;
         source boxToCell;
@@ -460,7 +460,7 @@ def render_fv_options(
         "                (" + " ".join(f"{value:.9g}" for value in row) + ")"
         for row in hub_element_rows()
     )
-    return foam_header("fvOptions") + f"""T1
+    return foam_header("fvOptions") + f"""turbine
 {{
     type axialFlowTurbineALSource;
     active on;
@@ -469,7 +469,7 @@ def render_fv_options(
     {{
         fieldNames (U);
         selectionMode cellSet;
-        cellSet T1;
+        cellSet turbine;
         origin {foam_vector(origin)};
         axis {foam_vector(turbine['axis'])};
         verticalDirection {foam_vector(turbine['vertical_direction'])};

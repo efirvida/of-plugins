@@ -14,7 +14,7 @@ FoamFile
 }
 // Generated from config/case.yaml. Do not edit by hand.
 
-T1
+turbine
 {
     type axialFlowTurbineALSource;
     active on;
@@ -23,7 +23,7 @@ T1
     {
         fieldNames (U);
         selectionMode cellSet;
-        cellSet T1;
+        cellSet turbine;
         origin (0 0 12.192);
         axis (-1 0 0);
         verticalDirection (0 0 1);
