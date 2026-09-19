@@ -1,0 +1,2 @@
+file_name,sequence,wind_speed_m_s,yaw_token,yaw_deg,repetition,rpm,tsr,rotpow_kw,lsstqcor_nm,eaeroth_n,wtbaro_pa,wtatemp_degc,rho_kg_m3
+s0700000,S,7.0,0000,0.011,0,71.8667,5.406795165688964,6.0304,801.265,1149.5288,102209.9844,11.1318,1.252490990875888
