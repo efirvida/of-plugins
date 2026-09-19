@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Extract the committed Phase VI experimental CSVs from the WDH workbook.
 
 Reads the NWTC `wt_loads_statistics.xls` workbook (public, DOI

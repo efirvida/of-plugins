@@ -229,3 +229,18 @@ the comparison tooling (F1 metric formulas, `root_dist`→r/R mapping, drift
 flag, fail-loud exit codes, sign gate, dry merge on synthetic fixtures). The
 upstream turbinesFoam tutorial tests are skipped when `WM_PROJECT_VERSION` is
 unset.
+
+## Attribution and license
+
+The case generator and tooling in this package are adapted from
+[`mttbrbr/single-actuator-line`](https://github.com/mttbrbr/single-actuator-line)
+(main `8284be8c...`), GPL-3.0-or-later. The adaptation retains that license:
+this package is distributed under **GPL-3.0-or-later**, consistent with
+`turbinesFoam` (see `turbinesFoam/LICENSE`).
+
+Data: rotor geometry and S809 polars are derived from the public U.S. Government
+reports NREL/TP-500-29955 (DOI 10.2172/15000240) and NREL/TP-442-7817; the
+measured load statistics come from the public NWTC WDH dataset
+(DOI 10.21947/WDH-DAP/1910052). No report PDF or workbook is redistributed —
+only derived numeric tables with per-directory `PROVENANCE.md` (source URL,
+sha256, sheet/table, row selection, units, extraction date).

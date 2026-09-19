@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Verify the environment and the generated case for the Phase VI validation.
 #
 # Accepts OpenFOAM v2506 (repository toolchain) and v2412.

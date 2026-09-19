@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Prepare (and optionally run or submit) one Phase VI run variant.
 #
 # Usage:

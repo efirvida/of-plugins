@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Stage 0 of the NREL Phase VI validation: mesh + checkMesh D/32 and D/48 plus
 # the <= 0.3 revolution 7 m/s stability runs of ALM and ASM, on the authorized
 # development queue (sequana_cpu_dev, 20 min). This is the only job of this

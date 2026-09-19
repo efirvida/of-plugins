@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Build the committed S809 polar files for the NREL Phase VI case.
 
 Reads the committed raw table transcriptions under `data/polars/raw/` (from

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Test-suite configuration.
 
 The upstream turbinesFoam suites drive OpenFOAM tutorial cases (`./Allrun`)

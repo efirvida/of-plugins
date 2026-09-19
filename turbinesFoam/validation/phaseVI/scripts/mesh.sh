@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Generate and validate one Phase VI mesh.
 #
 # Usage: mesh.sh <coarse|fine|ultra> [--domain long|squat] [--speed 7] [--dir DIR]

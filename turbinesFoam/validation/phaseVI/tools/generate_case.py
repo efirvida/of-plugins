@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Adapted from mttbrbr/single-actuator-line (main 8284be8c...), GPL-3.0-or-later; see README.md "Attribution and license".
 """Render the NREL Phase VI uniform-inflow case from `config/case.yaml`.
 
 Every generated file carries a "Generated from config/case.yaml" banner and

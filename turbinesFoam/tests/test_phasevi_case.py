@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Pure-Python contracts for the NREL Phase VI validation case package.
 
 These tests never require OpenFOAM: they exercise the YAML single source of

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Pure-Python contracts for the Phase VI comparison tool.
 
 Covers the Tooling layer of the design testing strategy: the F1 metric

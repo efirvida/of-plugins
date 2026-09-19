@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Generate the blade (and hub) element data for the NREL Phase VI case.
 
 Reads the committed geometry `data/geometry/phaseVI_blade.csv` (NREL/TP-500-29955

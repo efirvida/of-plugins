@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # PREPARED ONLY - do not submit until the long-queue authorization is granted.
 #
 # Stage 1+2 production array of the NREL Phase VI validation: one array task per

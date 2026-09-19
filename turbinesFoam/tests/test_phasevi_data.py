@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Pure-Python sanity checks for the committed NREL Phase VI data.
 
 Covers the geometry, the measured experimental anchors, the polar files, the

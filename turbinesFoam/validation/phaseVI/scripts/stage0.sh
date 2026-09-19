@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Stage 0 of the NREL Phase VI validation: mesh + checkMesh for D/32 and
 # D/48, then the <= 0.3 revolution stability runs of ALM and ASM at 7 m/s on
 # the authorized development queue. Stages 1-3 are declared in

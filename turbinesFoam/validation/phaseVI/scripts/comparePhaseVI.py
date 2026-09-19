@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Compare NREL Phase VI simulation runs with the measured WDH data.
 
 Reads the turbine-level CSV and the element-level CSVs for one or both models
