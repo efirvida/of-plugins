@@ -57,6 +57,27 @@ No submodules are used. All code is self-contained and built with `wmake`.
     `tutorials/axialFlowTurbineASM/` with an ALM-vs-ASM comparison script.
   - See [turbinesFoam/README.md](turbinesFoam/README.md) for original documentation.
 
+## NREL Phase VI validation (`turbinesFoam/validation/phaseVI/`)
+
+Uniform-inflow validation package for the NREL/NASA-Ames Phase VI rotor with
+the ALM and ASM models. A YAML single source of truth renders an 18-block hex
+case at D/32 (6.67 M cells), D/48 (22.5 M) or D/64 (53.4 M), with per-speed
+measured TSR kinematics, the ALM/ASM `fvOptions` twins, committed WDH
+experimental anchors and per-directory data provenance.
+
+- `scripts/runPhaseVI.sh` prepares/runs/submits one variant and enforces the
+  queue gates; `scripts/comparePhaseVI.py` merges simulation output with the
+  measured rows and writes the spanwise/turbine comparisons, `metrics.json`,
+  and the 7 m/s sign gate.
+- Staged plan: Stage 0 (mesh check + ≤ 0.3 revolution 7 m/s stability runs on
+  `sequana_cpu_dev`) is the only authorized execution; Stages 1–3 (7 m/s
+  headline, the {10, 13, 15, 25} m/s extension plus the Sequence S repeat, and
+  the optional IDDES / `nChordwise` / D/64 items) are prepared but **must not
+  be submitted** until the long-queue authorization is granted.
+- See [turbinesFoam/validation/phaseVI/README.md](turbinesFoam/validation/phaseVI/README.md)
+  for setup, metric definitions, tolerance bands and the modelling
+  limitations.
+
 ## FSI Motion Model
 
 The `solidBodyDisplacementLaplacianZone` solver implements the correct FSI motion
