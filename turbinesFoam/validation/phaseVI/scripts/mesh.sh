@@ -61,9 +61,20 @@ python3 "$root/tools/generate_case.py" \
 cd "$dir"
 
 # Re-use an existing mesh (blockMesh is serial and D/48 takes minutes); the
-# checkMesh validation below still runs on every invocation.
+# checkMesh validation below still runs on every invocation. topoSet is
+# re-run whenever its dictionary is newer than the last topoSet log: the
+# cellSet is part of the case contract (`selectionMode cellSet` in fvOptions)
+# and a mesh built from an older topoSetDict silently lacks the current set.
 if [ -d constant/polyMesh ] && grep -q "Mesh OK" log.checkMesh 2>/dev/null; then
     echo "Existing mesh found in $dir; skipping blockMesh and re-validating"
+    if [ ! -f log.topoSet ] || [ system/topoSetDict -nt log.topoSet ]; then
+        echo "topoSetDict changed since the last topoSet run; refreshing the cellSet"
+        if ! topoSet > log.topoSet 2>&1; then
+            cat log.topoSet >&2
+            echo "ERROR: topoSet failed ($dir)" >&2
+            exit 3
+        fi
+    fi
 else
     if ! blockMesh > log.blockMesh 2>&1; then
         cat log.blockMesh >&2
