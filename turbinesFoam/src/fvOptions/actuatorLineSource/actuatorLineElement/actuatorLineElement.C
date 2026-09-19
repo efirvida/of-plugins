@@ -566,7 +566,8 @@ Foam::fv::actuatorLineElement::actuatorLineElement
     dragCoefficient_(0.0),
     momentCoefficient_(0.0),
     profileName_(dict.lookup("profileName")),
-    profileData_(profileName_, dict.subDict("profileData"), debug),
+    debugLevel_(debug),
+    profileData_(profileName_, dict.subDict("profileData"), debugLevel_),
     dynamicStallActive_(false),
     omega_(0.0),
     chordMount_(0.25),
@@ -578,7 +579,7 @@ Foam::fv::actuatorLineElement::actuatorLineElement
     rootDistance_(0.0),
     endEffectFactor_(1.0),
     addedMassActive_(dict.lookupOrDefault("addedMass", false)),
-    addedMass_(mesh.time(), dict.lookupOrDefault("chordLength", 1.0), debug)
+    addedMass_(mesh.time(), dict.lookupOrDefault("chordLength", 1.0), debugLevel_)
 {
     meshBoundBox_.inflate(1e-6);
     read();

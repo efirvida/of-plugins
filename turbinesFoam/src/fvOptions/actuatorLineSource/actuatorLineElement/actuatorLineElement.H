@@ -144,6 +144,12 @@ protected:
         //- Profile name
         word profileName_;
 
+        //- Debug switch stored as a label: profileData and addedMassModel
+        //  keep `const label&` debug members, so passing the int debug
+        //  switch directly would bind them to an int-to-label conversion
+        //  temporary that dies at the end of the constructor
+        const label debugLevel_;
+
         //- Profile data (encapsulates coefficients)
         profileData profileData_;
 
