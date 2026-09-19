@@ -181,8 +181,9 @@ def render_control_dict(
     profile: str,
     end_revs: float | None,
     start_from: str,
+    sequence: str = "H",
 ) -> str:
-    values = kinematics(cfg, speed, mesh)
+    values = kinematics(cfg, speed, mesh, sequence)
     solver = cfg["solver"]
     if profile == "smoke":
         end_time = 2.0 * values["t_rev"]
@@ -435,6 +436,7 @@ def render_fv_options(
     mesh: str,
     case_dir: Path,
     element_type: str,
+    sequence: str = "H",
 ) -> str:
     """ALM/ASM twins rendered from one function.
 
@@ -442,7 +444,7 @@ def render_fv_options(
     the surface element, `nChordwise`. Path targets are found by
     `test_twins_differ_only_in_blade_keys`.
     """
-    values = kinematics(cfg, speed, mesh)
+    values = kinematics(cfg, speed, mesh, sequence)
     turbine = cfg["turbine"]
     actuator = cfg["actuator"]
     origin = turbine_origin(cfg)
@@ -558,6 +560,7 @@ def outputs(
     case_dir: Path,
     end_revs: float | None,
     start_from: str,
+    sequence: str = "H",
 ) -> dict[Path, str]:
     system = case_dir / "system"
     constant = case_dir / "constant"
@@ -566,13 +569,17 @@ def outputs(
         system / "blockMeshDict": render_block_mesh(cfg, mesh, domain, profile),
         system / "topoSetDict": render_toposet(cfg),
         system / "controlDict": render_control_dict(
-            cfg, speed, mesh, profile, end_revs, start_from
+            cfg, speed, mesh, profile, end_revs, start_from, sequence
         ),
         system / "decomposeParDict": render_decompose_par(cfg),
         system / "fvSchemes": render_fv_schemes(cfg),
         system / "fvSolution": render_fv_solution(cfg),
-        system / "fvOptions.ALM": render_fv_options(cfg, speed, mesh, case_dir, ALM_ELEMENT),
-        system / "fvOptions.ASM": render_fv_options(cfg, speed, mesh, case_dir, ASM_ELEMENT),
+        system / "fvOptions.ALM": render_fv_options(
+            cfg, speed, mesh, case_dir, ALM_ELEMENT, sequence
+        ),
+        system / "fvOptions.ASM": render_fv_options(
+            cfg, speed, mesh, case_dir, ASM_ELEMENT, sequence
+        ),
         constant / "transportProperties": render_transport_properties(cfg),
         constant / "turbulenceProperties": render_turbulence_properties(cfg),
     }
@@ -615,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--mesh", choices=MESH_CHOICES, default="coarse")
     parser.add_argument("--speed", default="7")
+    parser.add_argument("--sequence", choices=("H", "S"), default="H",
+                        help="Sequence H headline or the Sequence S 7 m/s repeat")
     parser.add_argument("--domain", choices=DOMAIN_CHOICES, default="long")
     parser.add_argument("--profile", choices=PROFILE_CHOICES, default="production")
     parser.add_argument("--case-dir", type=Path, default=DEFAULT_CASE_DIR)
@@ -639,6 +648,7 @@ def main(argv: list[str] | None = None) -> int:
             case_dir,
             args.end_revs,
             args.start_from,
+            args.sequence,
         )
     except (KeyError, ValueError) as exc:
         print(f"case generation error: {exc}", file=sys.stderr)

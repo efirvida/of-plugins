@@ -209,11 +209,55 @@ def assert_tsr_matches_experiment(
                 f"{key} m/s: configured TSR {configured} differs from the "
                 f"measured row TSR {derived:.6f} by more than {tolerance}"
             )
+    sequence_s = cfg.get("sequence_s")
+    if sequence_s:
+        speed = float(sequence_s["speed"])
+        path_s = EXPERIMENT_DIR / "sequence_S_performance.csv"
+        if path_s.exists():
+            with path_s.open(encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            match = [
+                row for row in rows
+                if math.isclose(
+                    float(row["wind_speed_m_s"]), speed, abs_tol=1e-9
+                )
+            ]
+            if not match:
+                raise ValueError(f"{path_s}: no measured row for {speed:g} m/s")
+            derived = tsr_from_rpm(
+                float(match[0]["rpm"]), speed, radius
+            )
+            configured = float(sequence_s["tsr"])
+            if abs(configured - derived) > tolerance:
+                raise ValueError(
+                    f"Sequence S {speed:g} m/s: configured TSR {configured} "
+                    f"differs from the measured row TSR {derived:.6f} by more "
+                    f"than {tolerance}"
+                )
 
 
-def select_speed(cfg: dict[str, Any], speed: str | float | int) -> dict[str, Any]:
-    """Return the kinematics entry for one supported wind speed."""
+def select_speed(
+    cfg: dict[str, Any], speed: str | float | int, sequence: str = "H"
+) -> dict[str, Any]:
+    """Return the kinematics entry for one supported wind speed.
+
+    `sequence="S"` selects the Sequence S repeat (7 m/s, s0700000); only a
+    speed with a configured `sequence_s` row is accepted.
+    """
     key = f"{float(speed):g}"
+    if sequence.upper() == "S":
+        row = cfg.get("sequence_s")
+        if not row or not math.isclose(float(row["speed"]), float(speed)):
+            raise KeyError(
+                f"no Sequence S row for {speed!r} m/s; configured: "
+                f"{cfg.get('sequence_s', {}).get('speed')}"
+            )
+        return {
+            "speed": float(row["speed"]),
+            "tsr": float(row["tsr"]),
+            "rotor_speed_rpm": float(row["rotor_speed_rpm"]),
+            "row": row["row"],
+        }
     speeds = _speeds(cfg)
     if key not in speeds:
         raise KeyError(
@@ -342,9 +386,14 @@ def assert_tip_constraint(cfg: dict[str, Any], speed: str | float | int, mesh: s
         )
 
 
-def kinematics(cfg: dict[str, Any], speed: str | float | int, mesh: str) -> dict[str, float]:
+def kinematics(
+    cfg: dict[str, Any],
+    speed: str | float | int,
+    mesh: str,
+    sequence: str = "H",
+) -> dict[str, float]:
     """All derived per-speed/per-mesh quantities used by the renderers."""
-    entry = select_speed(cfg, speed)
+    entry = select_speed(cfg, speed, sequence)
     resolution = _resolution(cfg, mesh)
     solver = cfg["solver"]
     omega = entry["tsr"] * entry["speed"] / float(cfg["turbine"]["radius"])
@@ -451,19 +500,48 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
         "--select",
-        nargs=3,
-        metavar=("SPEED", "MESH", "MODEL"),
-        help="validate a (speed, mesh, model) triple and print its kinematics",
+        nargs="+",
+        metavar="SPEED MESH MODEL [SEQUENCE]",
+        help="validate a (speed, mesh, model) triple and print its kinematics; "
+             "an optional fourth value selects the sequence (H or S)",
+    )
+    parser.add_argument(
+        "--target-cells",
+        metavar="MESH",
+        help="print the accepted cell-count band of a mesh as 'LOW HIGH'",
+    )
+    parser.add_argument(
+        "--stage",
+        metavar="NAME",
+        help="print one stage of the staged run plan as JSON",
     )
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.config)
         if args.select:
-            speed, mesh, model = args.select
+            if len(args.select) == 3:
+                speed, mesh, model = args.select
+                sequence = "H"
+            elif len(args.select) == 4:
+                speed, mesh, model, sequence = args.select
+            else:
+                raise KeyError("--select takes SPEED MESH MODEL [SEQUENCE]")
             if model not in ("alm", "asm"):
                 raise KeyError(f"unsupported model {model!r}; choose alm or asm")
-            values = kinematics(cfg, speed, mesh)
+            values = kinematics(cfg, speed, mesh, sequence)
             print(json.dumps({"model": model, **values}, indent=2, sort_keys=True))
+        elif args.target_cells:
+            resolution = _resolution(cfg, args.target_cells)
+            low, high = (int(value) for value in resolution["target_cells"])
+            print(f"{low} {high}")
+        elif args.stage:
+            stage = stages(cfg).get(args.stage)
+            if stage is None:
+                raise KeyError(
+                    f"unknown stage {args.stage!r}; configured: "
+                    f"{sorted(stages(cfg))}"
+                )
+            print(json.dumps(stage, indent=2, sort_keys=True))
         return 0
     except (KeyError, ValueError) as exc:
         print(f"case configuration error: {exc}", file=sys.stderr)
