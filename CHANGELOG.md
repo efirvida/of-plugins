@@ -114,6 +114,39 @@ rotating machinery (coupling → mesh motion → rotation → loading).
 the coupled simulation, badges for OpenFOAM/preCICE/licence, and clearer
 plugin descriptions.  Technical usage sections unchanged.
 
+#### 5. Add blade actuator surface model (ASM) to turbinesFoam
+
+**Files:**
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/actuatorLineElement.{H,C}` (updated)
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/actuatorSurfaceElement.{H,C}` (new)
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineSource.C` (updated)
+- `turbinesFoam/src/Make/files` (updated)
+- `turbinesFoam/tutorials/axialFlowTurbineASM/` (new, incl. `compareALMvsASM.py`)
+- `turbinesFoam/tests/test_asm.py`, `tests/test_aftal_asm.py`, `tests/axialFlowTurbineASMSource/` (new)
+- `turbinesFoam/README.md`, `README.md` (updated)
+
+**Problem:** The actuator line model (ALM) samples the inflow at a single
+collocation point per radial station and ties the projection width to the
+chord (`epsilon = max(0.25*c, mesh)`), so it cannot resolve chordwise flow
+features and does not couple to meshes finer than the chord.
+
+**Solution:** Optional blade actuator surface element
+(`actuatorSurfaceElement`, Yang & Sotiropoulos, arXiv:1702.02108v4, Sec.
+2.1), selected per line/blade with `elementType actuatorSurfaceElement;`
+(+ optional `nChordwise`, default 5), that reuses the full inherited BEM
+force chain but:
+- averages the inflow over `nChordwise` equal chord strips (midpoint rule),
+- distributes the force uniformly across the strips
+  (`forceVector_/nChordwise` per strip, own Gaussian each), and
+- uses a mesh-only projection width `2*cbrt(V)*meshFactor`.
+
+The change completes the vestigial `actuatorLineElement` run-time
+selection table (`New` + `elementType` default) so the ALM path stays
+byte-identical when the key is absent.  Includes a HAWT ASM tutorial
+(copy of `axialFlowTurbineAL` with the ASM blade config and truncated
+`endTime`) and an ALM-vs-ASM comparison script, plus integration tests.
+Documented as HAWT-only; CFTAL/VAWT usage untested.
+
 ---
 
 ### Bug Fixes (FSI Physics)

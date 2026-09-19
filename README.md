@@ -50,6 +50,11 @@ No submodules are used. All code is self-contained and built with `wmake`.
   - Original git history stripped; included as a base for research development.
   - Upstream `foamStyleCheck` tool removed (community vera++ checker, not an
     official OpenFOAM formatter) — the repository remains submodule-free.
+  - **Fork extension:** optional blade **actuator surface model (ASM)**
+    (`elementType actuatorSurfaceElement;` + `nChordwise` per line/blade)
+    with chord-averaged inflow and mesh-based projection width; ALM remains
+    the byte-identical default. HAWT tutorial at
+    `tutorials/axialFlowTurbineASM/` with an ALM-vs-ASM comparison script.
   - See [turbinesFoam/README.md](turbinesFoam/README.md) for original documentation.
 
 ## FSI Motion Model
