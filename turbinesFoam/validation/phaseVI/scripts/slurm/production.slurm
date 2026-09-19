@@ -36,7 +36,12 @@ export WM_COMPILE_OPTION=Opt
 export WM_PRECISION_OPTION=DP
 export WM_LABEL_SIZE=64
 export WM_OPTIONS=linux64GccDPInt64Opt
+# etc/bashrc is not written for strict mode: it dereferences optional variables
+# (WM_PROJECT_SITE on SDumont) and can return non-zero, so `set -eu` aborts the
+# job while sourcing it. Disable both while sourcing, then restore them.
+set +eu
 . "$WM_PROJECT_DIR/etc/bashrc"
+set -eu
 
 export FOAM_USER_LIBBIN=$WM_PROJECT_USER_DIR/platforms/$WM_OPTIONS/lib
 export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib/sys-openmpi:$LD_LIBRARY_PATH
