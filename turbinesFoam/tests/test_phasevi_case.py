@@ -30,6 +30,7 @@ from case_config import (  # noqa: E402
     kinematics,
     load_config,
     select_speed,
+    solver_delta_t,
     speed_keys,
     tip_displacement,
     validate_config,
@@ -251,6 +252,111 @@ def test_stage_matrix(cfg):
 def test_decomposition_rendered(cfg):
     text = generate_case.render_decompose_par(cfg)
     assert "numberOfSubdomains 48;" in text
+    override = generate_case.render_decompose_par(cfg, ranks=192)
+    assert "numberOfSubdomains 192;" in override
+    assert "numberOfSubdomains 48;" not in override
+
+
+def test_iddes_variant(cfg):
+    assert cfg["solver"]["iddes_model"] == "kOmegaSSTIDDES"
+    iddes = cfg["iddes"]
+    assert iddes["delta"] == "IDDESDelta"
+    assert iddes["delta_t"] == 0.0025
+
+    les = generate_case.render_turbulence_properties(cfg, "iddes")
+    assert "simulationType LES;" in les
+    assert "LESModel kOmegaSSTIDDES;" in les
+    assert "delta IDDESDelta;" in les
+    assert "IDDESDeltaCoeffs" in les
+    assert "Cw 0.15;" in les
+    assert "RASModel" not in les
+
+    ras = generate_case.render_turbulence_properties(cfg)
+    assert "simulationType RAS;" in ras
+    assert "RASModel kOmegaSST;" in ras
+    assert "LESModel" not in ras
+
+    schemes = generate_case.render_fv_schemes(cfg, "iddes")
+    assert "div(phi,U)      Gauss linear;" in schemes
+    assert "nRequired       true;" in schemes
+    assert "bounded Gauss linearUpwind grad(U)" not in schemes
+    urans_schemes = generate_case.render_fv_schemes(cfg)
+    assert "div(phi,U)      bounded Gauss linearUpwind grad(U);" in urans_schemes
+    assert "nRequired" not in urans_schemes
+
+    for mesh in EXPECTED_CELLS:
+        assert solver_delta_t(cfg, mesh, "iddes") == 0.0025
+        control = generate_case.render_control_dict(
+            cfg, "7", mesh, "production", None, "startTime", solver="iddes"
+        )
+        assert "deltaT 0.0025;" in control
+        assert "adjustTimeStep off;" in control
+        assert_tip_constraint(cfg, "7", mesh, "iddes")
+        assert tip_displacement(cfg, "7", mesh, "iddes") < hub_cell_size(cfg, mesh)
+    assert tip_displacement(cfg, "7", "fine", "iddes") == pytest.approx(
+        5.408 * 7.0 * 0.0025, rel=1e-12
+    )
+    assert kinematics(cfg, "7", "fine", "H", "iddes")["delta_t"] == 0.0025
+    assert kinematics(cfg, "7", "fine")["delta_t"] == 0.005
+
+    invalid = copy.deepcopy(cfg)
+    invalid["iddes"]["delta"] = "cubeRootVol"
+    with pytest.raises(ValueError, match="IDDESDelta"):
+        validate_config(invalid)
+    invalid = copy.deepcopy(cfg)
+    invalid["iddes"]["delta_t"] = 0.0
+    with pytest.raises(ValueError, match="delta_t"):
+        validate_config(invalid)
+
+
+def test_n_chordwise_override(cfg):
+    asm = generate_case.render_fv_options(
+        cfg, "7", "fine", PACKAGE / "case", generate_case.ASM_ELEMENT,
+        n_chordwise=1,
+    )
+    assert "nChordwise 1;" in asm
+    assert "nChordwise 5;" not in asm
+    # The override reaches the ASM twin only; the ALM twin has no such key.
+    alm = generate_case.render_fv_options(
+        cfg, "7", "fine", PACKAGE / "case", generate_case.ALM_ELEMENT,
+        n_chordwise=1,
+    )
+    assert "nChordwise" not in alm
+    with pytest.raises(ValueError, match="positive"):
+        generate_case.render_fv_options(
+            cfg, "7", "fine", PACKAGE / "case", generate_case.ASM_ELEMENT,
+            n_chordwise=0,
+        )
+
+
+def test_cli_variant_render(cfg, tmp_path):
+    """The CLI renders IDDES + nChordwise/ranks overrides in one pass."""
+    case_dir = tmp_path / "case"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PACKAGE / "tools" / "generate_case.py"),
+            "--mesh", "fine",
+            "--solver", "iddes",
+            "--n-chordwise", "1",
+            "--ranks", "192",
+            "--case-dir", str(case_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    turbulence = (case_dir / "constant" / "turbulenceProperties").read_text()
+    assert "simulationType LES;" in turbulence
+    assert "LESModel kOmegaSSTIDDES;" in turbulence
+    assert "delta IDDESDelta;" in turbulence
+    control = (case_dir / "system" / "controlDict").read_text()
+    assert "deltaT 0.0025;" in control
+    assert "nChordwise 1;" in (case_dir / "system" / "fvOptions.ASM").read_text()
+    assert "numberOfSubdomains 192;" in (
+        case_dir / "system" / "decomposeParDict"
+    ).read_text()
 
 
 def test_generated_case_is_current():

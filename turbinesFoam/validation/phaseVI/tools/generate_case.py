@@ -10,6 +10,7 @@ stale, without writing anything.
 Usage:
     generate_case.py [--mesh coarse|fine|ultra] [--speed 7|10|13|15|20|25]
                      [--domain long|squat] [--profile production|smoke]
+                     [--solver urans|iddes] [--n-chordwise N] [--ranks N]
                      [--case-dir DIR] [--end-revs FLOAT]
                      [--start-from startTime|latestTime] [--check]
 
@@ -30,6 +31,7 @@ from case_config import (
     DEFAULT_CONFIG,
     POLARS_DIR,
     ROOT,
+    SOLVER_CHOICES,
     axis_extents_D,
     foam_header,
     foam_vector,
@@ -184,16 +186,17 @@ def render_control_dict(
     end_revs: float | None,
     start_from: str,
     sequence: str = "H",
+    solver: str = "urans",
 ) -> str:
-    values = kinematics(cfg, speed, mesh, sequence)
-    solver = cfg["solver"]
+    values = kinematics(cfg, speed, mesh, sequence, solver)
+    solver_cfg = cfg["solver"]
     if profile == "smoke":
         end_time = 2.0 * values["t_rev"]
         purge_write = 4
     else:
-        end_time = (end_revs if end_revs is not None else float(solver["end_revolutions"])) * values["t_rev"]
-        purge_write = int(solver["purge_write"])
-    return foam_header("controlDict") + f"""application {solver['application']};
+        end_time = (end_revs if end_revs is not None else float(solver_cfg["end_revolutions"])) * values["t_rev"]
+        purge_write = int(solver_cfg["purge_write"])
+    return foam_header("controlDict") + f"""application {solver_cfg['application']};
 startFrom {start_from};
 startTime 0;
 stopAt endTime;
@@ -217,48 +220,59 @@ libs
 """
 
 
-def render_fv_schemes(cfg: dict[str, Any]) -> str:
-    """Cartesian-mesh schemes; backward ddt, linearUpwind for U."""
-    del cfg
-    return foam_header("fvSchemes") + """ddtSchemes
-{
+def render_fv_schemes(cfg: dict[str, Any], solver: str = "urans") -> str:
+    """Cartesian-mesh schemes; backward ddt, linearUpwind for U.
+
+    The IDDES variant switches U convection to the configured (non-dissipative)
+    scheme and asks `wallDist` for the wall-normal vectors up front, because
+    `IDDESDelta` reads `wallDist::n()`.
+    """
+    div_phi_u = "bounded Gauss linearUpwind grad(U)"
+    wall_dist = "    method          meshWave;"
+    if solver == "iddes":
+        iddes = cfg["iddes"]
+        div_phi_u = str(iddes["div_phi_U"])
+        if bool(iddes["wall_dist_n_required"]):
+            wall_dist = "    method          meshWave;\n    nRequired       true;"
+    return foam_header("fvSchemes") + f"""ddtSchemes
+{{
     default         backward;
-}
+}}
 
 gradSchemes
-{
+{{
     default         Gauss linear;
     grad(U)         cellLimited Gauss linear 1;
-}
+}}
 
 divSchemes
-{
+{{
     default         none;
-    div(phi,U)      bounded Gauss linearUpwind grad(U);
+    div(phi,U)      {div_phi_u};
     div(phi,k)      bounded Gauss upwind;
     div(phi,omega)  bounded Gauss upwind;
     div((nuEff*dev2(T(grad(U))))) Gauss linear;
-}
+}}
 
 laplacianSchemes
-{
+{{
     default         Gauss linear orthogonal;
-}
+}}
 
 interpolationSchemes
-{
+{{
     default         linear;
-}
+}}
 
 snGradSchemes
-{
+{{
     default         orthogonal;
-}
+}}
 
 wallDist
-{
-    method          meshWave;
-}
+{{
+{wall_dist}
+}}
 """
 
 
@@ -323,8 +337,10 @@ relaxationFactors
 """
 
 
-def render_decompose_par(cfg: dict[str, Any]) -> str:
-    nproc = int(cfg["decomposition"]["number_of_subdomains"])
+def render_decompose_par(cfg: dict[str, Any], ranks: int | None = None) -> str:
+    nproc = int(ranks) if ranks is not None else int(
+        cfg["decomposition"]["number_of_subdomains"]
+    )
     return foam_header("decomposeParDict") + f"""numberOfSubdomains {nproc};
 method scotch;
 """
@@ -338,7 +354,31 @@ nu              nu [0 2 -1 0 0 0 0] {nu:.8g};
 """
 
 
-def render_turbulence_properties(cfg: dict[str, Any]) -> str:
+def render_turbulence_properties(cfg: dict[str, Any], solver: str = "urans") -> str:
+    """RAS kOmegaSST by default; LES kOmegaSSTIDDES for the Stage 3 variant.
+
+    `kOmegaSSTIDDES::setDelta()` accepts only an IDDESDelta-based delta model
+    (validated in `case_config.validate_config`), configured here as
+    `delta IDDESDelta` with its `IDDESDeltaCoeffs` sub-dictionary.
+    """
+    if solver == "iddes":
+        iddes = cfg["iddes"]
+        model = cfg["solver"]["iddes_model"]
+        return foam_header("turbulenceProperties") + f"""simulationType LES;
+
+LES
+{{
+    LESModel {model};
+    turbulence on;
+    printCoeffs on;
+    delta {iddes['delta']};
+
+    {iddes['delta']}Coeffs
+    {{
+        Cw {float(iddes['delta_Cw']):.8g};
+    }}
+}}
+"""
     model = cfg["solver"]["turbulence_model"]
     return foam_header("turbulenceProperties") + f"""simulationType RAS;
 
@@ -439,12 +479,14 @@ def render_fv_options(
     case_dir: Path,
     element_type: str,
     sequence: str = "H",
+    n_chordwise: int | None = None,
 ) -> str:
     """ALM/ASM twins rendered from one function.
 
     The twins differ only in the blade element keys: `elementType` and, for
     the surface element, `nChordwise`. Path targets are found by
-    `test_twins_differ_only_in_blade_keys`.
+    `test_twins_differ_only_in_blade_keys`. `n_chordwise` overrides the
+    configured ASM strip count (the ALM has no such key).
     """
     values = kinematics(cfg, speed, mesh, sequence)
     turbine = cfg["turbine"]
@@ -452,7 +494,12 @@ def render_fv_options(
     origin = turbine_origin(cfg)
     polars = os.path.relpath(POLARS_DIR / "S809_OSU_Re1M_total.dat", case_dir / "system")
     profiles = " ".join(blade_element_profiles(cfg))
-    n_chordwise = int(actuator["n_chordwise"])
+    if n_chordwise is None:
+        n_chordwise = int(actuator["n_chordwise"])
+    elif int(n_chordwise) <= 0:
+        raise ValueError("nChordwise must be a positive integer")
+    else:
+        n_chordwise = int(n_chordwise)
     element_keys = f"                elementType {element_type};\n"
     if element_type == ASM_ELEMENT:
         element_keys += f"                nChordwise {n_chordwise};\n"
@@ -563,6 +610,9 @@ def outputs(
     end_revs: float | None,
     start_from: str,
     sequence: str = "H",
+    solver: str = "urans",
+    n_chordwise: int | None = None,
+    ranks: int | None = None,
 ) -> dict[Path, str]:
     system = case_dir / "system"
     constant = case_dir / "constant"
@@ -571,19 +621,19 @@ def outputs(
         system / "blockMeshDict": render_block_mesh(cfg, mesh, domain, profile),
         system / "topoSetDict": render_toposet(cfg),
         system / "controlDict": render_control_dict(
-            cfg, speed, mesh, profile, end_revs, start_from, sequence
+            cfg, speed, mesh, profile, end_revs, start_from, sequence, solver
         ),
-        system / "decomposeParDict": render_decompose_par(cfg),
-        system / "fvSchemes": render_fv_schemes(cfg),
+        system / "decomposeParDict": render_decompose_par(cfg, ranks),
+        system / "fvSchemes": render_fv_schemes(cfg, solver),
         system / "fvSolution": render_fv_solution(cfg),
         system / "fvOptions.ALM": render_fv_options(
-            cfg, speed, mesh, case_dir, ALM_ELEMENT, sequence
+            cfg, speed, mesh, case_dir, ALM_ELEMENT, sequence, n_chordwise
         ),
         system / "fvOptions.ASM": render_fv_options(
-            cfg, speed, mesh, case_dir, ASM_ELEMENT, sequence
+            cfg, speed, mesh, case_dir, ASM_ELEMENT, sequence, n_chordwise
         ),
         constant / "transportProperties": render_transport_properties(cfg),
-        constant / "turbulenceProperties": render_turbulence_properties(cfg),
+        constant / "turbulenceProperties": render_turbulence_properties(cfg, solver),
     }
     for field in ("U", "p", "k", "omega", "nut"):
         rendered[zero / field] = render_field_uniform(cfg, speed, field)
@@ -619,6 +669,13 @@ def _display(path: Path, case_dir: Path) -> str:
         return str(path)
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -628,6 +685,27 @@ def main(argv: list[str] | None = None) -> int:
                         help="Sequence H headline or the Sequence S 7 m/s repeat")
     parser.add_argument("--domain", choices=DOMAIN_CHOICES, default="long")
     parser.add_argument("--profile", choices=PROFILE_CHOICES, default="production")
+    parser.add_argument(
+        "--solver",
+        choices=SOLVER_CHOICES,
+        default="urans",
+        help="urans renders RAS kOmegaSST; iddes renders the Stage 3 LES "
+             "kOmegaSSTIDDES variant with its own fixed time step",
+    )
+    parser.add_argument(
+        "--n-chordwise",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="override the configured ASM chordwise strip count (ASM twin only)",
+    )
+    parser.add_argument(
+        "--ranks",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="override decomposition.number_of_subdomains in decomposeParDict",
+    )
     parser.add_argument("--case-dir", type=Path, default=DEFAULT_CASE_DIR)
     parser.add_argument("--end-revs", type=float, default=None)
     parser.add_argument("--start-from", choices=START_FROM_CHOICES, default="startTime")
@@ -651,6 +729,9 @@ def main(argv: list[str] | None = None) -> int:
             args.end_revs,
             args.start_from,
             args.sequence,
+            solver=args.solver,
+            n_chordwise=args.n_chordwise,
+            ranks=args.ranks,
         )
     except (KeyError, ValueError) as exc:
         print(f"case generation error: {exc}", file=sys.stderr)

@@ -4,7 +4,8 @@
 #
 # Usage:
 #   runPhaseVI.sh -m alm|asm -u <wind-speed> [-mesh coarse|fine|ultra]
-#                 [--domain long|squat] [-s H|S] [--stage0] [--restart]
+#                 [--domain long|squat] [-s H|S] [--solver urans|iddes]
+#                 [--nchordwise N] [--ranks N] [--stage0] [--restart]
 #                 [--run] [--submit]
 #
 # -m/-u select the model and the per-speed measured TSR from config/case.yaml.
@@ -13,13 +14,20 @@
 # case/ skeleton is never modified), the matching fvOptions twin is installed
 # as system/fvOptions, the shared mesh is hardlinked in and run.json is written.
 #
+# --solver iddes renders the Stage 3 LES kOmegaSSTIDDES variant (fixed 0.0025 s
+# step) and appends -iddes to the run id. --nchordwise N overrides the ASM
+# chordwise strip count (ASM only; appends -ncN) and --ranks N overrides the
+# configured decomposition (rendered into decomposeParDict and used for
+# mpirun); inside a Slurm allocation --ranks must match SLURM_NTASKS.
+#
 # --stage0 caps the run at 0.25 revolutions (spec bound 0.3) for the authorized
 # development queue. --restart resumes from the latest written time (falls back
 # to startTime when no time has been written yet). --run executes decomposePar
 # and mpirun (inside a Slurm allocation); --submit hands the run to Slurm.
 #
 # Exit codes:
-#   2  unsupported input (model, speed, mesh, domain or sequence)
+#   2  unsupported input (model, speed, mesh, domain, sequence, flag
+#      combination or a --ranks value that differs from SLURM_NTASKS)
 #   3  environment, blockMesh/checkMesh or solver failure
 #   4  generated case stale
 #   5  long-queue authorization gate (PHASEVI_LONG_QUEUE_AUTHORIZED=1 required)
@@ -29,7 +37,7 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/.." && pwd)
 
 usage() {
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 model=""
@@ -37,6 +45,9 @@ speed=""
 mesh=coarse
 domain=long
 sequence=H
+solver=urans
+nchordwise=""
+ranks_override=""
 stage0=0
 restart=0
 run=0
@@ -48,6 +59,9 @@ while [ $# -gt 0 ]; do
         -mesh|--mesh) mesh="$2"; shift ;;
         --domain) domain="$2"; shift ;;
         -s|--sequence) sequence="$2"; shift ;;
+        --solver) solver="$2"; shift ;;
+        --nchordwise) nchordwise="$2"; shift ;;
+        --ranks) ranks_override="$2"; shift ;;
         --stage0) stage0=1 ;;
         --restart) restart=1 ;;
         --run) run=1 ;;
@@ -80,12 +94,68 @@ case "$sequence" in
     s|S) sequence=S ;;
     *) echo "ERROR: unsupported sequence: $sequence" >&2; exit 2 ;;
 esac
-
-# Validates the (speed, mesh, model, sequence) combination and the
-# tip-displacement constraint; rejects unsupported values with exit 2.
-if ! python3 "$root/tools/case_config.py" --select "$speed" "$mesh" "$model" "$sequence" >/dev/null; then
-    echo "ERROR: unsupported (model, speed, mesh, sequence) combination" >&2
+case "$solver" in
+    urans|iddes) ;;
+    *) echo "ERROR: unsupported solver: $solver (choose urans or iddes)" >&2; exit 2 ;;
+esac
+if [ -n "$nchordwise" ]; then
+    if [ "$model" = "alm" ]; then
+        echo "ERROR: --nchordwise is ASM-only (-m asm)" >&2
+        exit 2
+    fi
+    case "$nchordwise" in
+        *[!0-9]*) echo "ERROR: --nchordwise must be a positive integer" >&2; exit 2 ;;
+    esac
+    if [ "$nchordwise" -le 0 ]; then
+        echo "ERROR: --nchordwise must be a positive integer" >&2
+        exit 2
+    fi
+fi
+if [ -n "$ranks_override" ]; then
+    case "$ranks_override" in
+        *[!0-9]*) echo "ERROR: --ranks must be a positive integer" >&2; exit 2 ;;
+    esac
+    if [ "$ranks_override" -le 0 ]; then
+        echo "ERROR: --ranks must be a positive integer" >&2
+        exit 2
+    fi
+fi
+if [ "$submit" -eq 1 ] && { [ "$solver" = "iddes" ] || [ -n "$nchordwise" ] \
+        || [ -n "$ranks_override" ]; }; then
+    echo "ERROR: --submit cannot carry --solver iddes, --nchordwise or --ranks;" >&2
+    echo "  Stage 3 is submitted through its prepared arrays:" >&2
+    echo "  scripts/slurm/stage3.slurm and scripts/slurm/stage3-d64.slurm." >&2
     exit 2
+fi
+
+# Validates the (speed, mesh, model, sequence, solver) combination and the
+# tip-displacement constraint of the selected time step; rejects unsupported
+# values with exit 2.
+if ! python3 "$root/tools/case_config.py" --select "$speed" "$mesh" "$model" \
+        "$sequence" --solver "$solver" >/dev/null; then
+    echo "ERROR: unsupported (model, speed, mesh, sequence, solver) combination" >&2
+    exit 2
+fi
+
+config_ranks=$(python3 -c "import sys; sys.path.insert(0, '$root/tools'); import case_config; print(case_config.load_config()['decomposition']['number_of_subdomains'])")
+ranks="$config_ranks"
+if [ -n "$ranks_override" ]; then
+    ranks="$ranks_override"
+fi
+# Inside a Slurm allocation the rendered decomposeParDict and `mpirun -np` must
+# not ask for more ranks than sbatch allocated.
+if [ -n "${SLURM_NTASKS:-}" ]; then
+    case "$SLURM_NTASKS" in
+        *[!0-9]*)
+            echo "ERROR: SLURM_NTASKS is not a positive integer: $SLURM_NTASKS" >&2
+            exit 2
+            ;;
+    esac
+    if [ "$ranks" -ne "$SLURM_NTASKS" ]; then
+        echo "ERROR: --ranks $ranks does not match SLURM_NTASKS=$SLURM_NTASKS." >&2
+        echo "  Re-run with --ranks $SLURM_NTASKS or fix the allocation." >&2
+        exit 2
+    fi
 fi
 
 # Propagate the environment (3) / stale-case (4) exit code.
@@ -96,13 +166,22 @@ run_id="$model-U${speed_token}-$mesh"
 if [ "$sequence" = "S" ]; then
     run_id="$run_id-seqS"
 fi
+if [ "$solver" = "iddes" ]; then
+    run_id="$run_id-iddes"
+fi
+if [ -n "$nchordwise" ]; then
+    run_id="$run_id-nc$nchordwise"
+fi
 if [ "$stage0" -eq 1 ]; then
     run_id="$run_id-s0"
 fi
 run_dir="$root/runs/$run_id"
 
 echo "Preparing $run_id in $run_dir"
-render_args="--mesh $mesh --speed $speed --domain $domain --sequence $sequence --case-dir $run_dir"
+render_args="--mesh $mesh --speed $speed --domain $domain --sequence $sequence --case-dir $run_dir --solver $solver --ranks $ranks"
+if [ -n "$nchordwise" ]; then
+    render_args="$render_args --n-chordwise $nchordwise"
+fi
 if [ "$stage0" -eq 1 ]; then
     render_args="$render_args --end-revs 0.25"
 fi
@@ -148,7 +227,8 @@ rm -rf "$run_dir/constant/polyMesh"
 cp -al "$mesh_dir/constant/polyMesh" "$run_dir/constant/polyMesh"
 echo "Linked shared $mesh mesh from $mesh_dir"
 
-python3 - "$run_dir" "$root" "$model" "$speed_token" "$mesh" "$domain" "$sequence" "$stage0" <<'PY'
+python3 - "$run_dir" "$root" "$model" "$speed_token" "$mesh" "$domain" "$sequence" \
+    "$stage0" "$solver" "$nchordwise" "$ranks" <<'PY'
 import datetime
 import hashlib
 import json
@@ -165,7 +245,10 @@ from pathlib import Path
     domain,
     sequence,
     stage0,
-) = sys.argv[1:9]
+    solver,
+    nchordwise,
+    ranks,
+) = sys.argv[1:12]
 run_dir = Path(run_dir)
 root = Path(root)
 
@@ -190,6 +273,9 @@ payload = {
     "mesh": mesh,
     "domain": domain,
     "sequence": sequence,
+    "solver": solver,
+    "n_chordwise": int(nchordwise) if nchordwise else None,
+    "ranks": int(ranks),
     "stage0": stage0 == "1",
     "run_dir": str(run_dir),
     "start_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -197,8 +283,6 @@ payload = {
 (run_dir / "run.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 print(f"Wrote {run_dir / 'run.json'}")
 PY
-
-ranks=$(python3 -c "import sys; sys.path.insert(0, '$root/tools'); import case_config; print(case_config.load_config()['decomposition']['number_of_subdomains'])")
 
 if [ "$run" -eq 1 ]; then
     cd "$run_dir"
@@ -254,6 +338,10 @@ PY
         sbatch "$here/slurm/production.slurm"
     fi
 else
+    suggestion="$0 -m $model -u $speed_token -mesh $mesh --sequence $sequence --solver $solver --ranks $ranks"
+    if [ -n "$nchordwise" ]; then
+        suggestion="$suggestion --nchordwise $nchordwise"
+    fi
     echo "Prepared $run_id. Run the solver with:"
-    echo "  $0 -m $model -u $speed_token -mesh $mesh --sequence $sequence --run"
+    echo "  $suggestion --run"
 fi

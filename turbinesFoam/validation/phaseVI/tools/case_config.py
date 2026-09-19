@@ -35,6 +35,11 @@ EXPERIMENT_DIR = ROOT / "data" / "experiment"
 # constraint at the measured rotor speed.
 SCAFFOLD_DELTA_T = 0.03
 
+# Solver variants: URANS `kOmegaSST` (headline) and the Stage 3 IDDES
+# confirmation. The name selects the turbulence properties, the scheme
+# overrides and the fixed time step.
+SOLVER_CHOICES = ("urans", "iddes")
+
 # Blade root cutout station; everything inboard of it is modelled as cylinder.
 ROOT_CUTOUT_RADIUS = 0.5083
 ROOT_CYLINDER_END = 1.2575
@@ -141,8 +146,36 @@ def validate_config(cfg: dict[str, Any]) -> None:
             raise ValueError(f"solver.{field} must be positive")
     if int(solver["discard_revolutions"]) >= int(solver["end_revolutions"]):
         raise ValueError("solver.discard_revolutions must be smaller than end_revolutions")
+    if str(solver["iddes_model"]) != "kOmegaSSTIDDES":
+        raise ValueError("solver.iddes_model must be kOmegaSSTIDDES")
     if int(cfg["decomposition"]["number_of_subdomains"]) <= 0:
         raise ValueError("decomposition.number_of_subdomains must be positive")
+
+    iddes = cfg.get("iddes")
+    if not isinstance(iddes, dict):
+        raise ValueError("iddes must define the Stage 3 IDDES variant")
+    # kOmegaSSTIDDES::setDelta() (OpenFOAM.com v2506) aborts unless the LES
+    # delta is an IDDESDelta-based model; cubeRootVol and friends are invalid.
+    if str(iddes.get("delta")) != "IDDESDelta":
+        raise ValueError(
+            "iddes.delta must be IDDESDelta: kOmegaSSTIDDES rejects any other "
+            "LESdelta model at construction time"
+        )
+    if float(iddes.get("delta_t", 0.0)) <= 0.0:
+        raise ValueError("iddes.delta_t must be positive")
+    if not isinstance(iddes.get("wall_dist_n_required"), bool):
+        raise ValueError("iddes.wall_dist_n_required must be a boolean")
+    if not str(iddes.get("div_phi_U", "")).strip():
+        raise ValueError("iddes.div_phi_U must not be empty")
+
+
+def check_solver(solver: str) -> str:
+    """Validate and return a solver variant name."""
+    if solver not in SOLVER_CHOICES:
+        raise KeyError(
+            f"unsupported solver {solver!r}; choose from {list(SOLVER_CHOICES)}"
+        )
+    return solver
 
 
 def speed_keys(cfg: dict[str, Any]) -> list[str]:
@@ -371,15 +404,30 @@ def tip_speed(cfg: dict[str, Any], speed: str | float | int) -> float:
     return entry["tsr"] * entry["speed"]
 
 
-def tip_displacement(cfg: dict[str, Any], speed: str | float | int, mesh: str) -> float:
+def solver_delta_t(cfg: dict[str, Any], mesh: str, solver: str = "urans") -> float:
+    """Fixed time step (s) of a solver variant.
+
+    URANS uses the per-mesh `delta_t` (D/32 0.008, D/48 0.005, D/64 0.004);
+    the IDDES variant uses its own fixed `iddes.delta_t` on every mesh.
+    """
+    check_solver(solver)
+    if solver == "iddes":
+        return float(cfg["iddes"]["delta_t"])
+    return float(_resolution(cfg, mesh)["delta_t"])
+
+
+def tip_displacement(
+    cfg: dict[str, Any], speed: str | float | int, mesh: str, solver: str = "urans"
+) -> float:
     """Tip displacement per time step, in metres."""
-    resolution = _resolution(cfg, mesh)
-    return tip_speed(cfg, speed) * float(resolution["delta_t"])
+    return tip_speed(cfg, speed) * solver_delta_t(cfg, mesh, solver)
 
 
-def assert_tip_constraint(cfg: dict[str, Any], speed: str | float | int, mesh: str) -> None:
+def assert_tip_constraint(
+    cfg: dict[str, Any], speed: str | float | int, mesh: str, solver: str = "urans"
+) -> None:
     """Fail when the tip displacement per step reaches the hub-adjacent cell."""
-    displacement = tip_displacement(cfg, speed, mesh)
+    displacement = tip_displacement(cfg, speed, mesh, solver)
     hub_cell = hub_cell_size(cfg, mesh)
     if displacement >= hub_cell:
         raise ValueError(
@@ -393,15 +441,15 @@ def kinematics(
     speed: str | float | int,
     mesh: str,
     sequence: str = "H",
+    solver: str = "urans",
 ) -> dict[str, float]:
     """All derived per-speed/per-mesh quantities used by the renderers."""
+    check_solver(solver)
     entry = select_speed(cfg, speed, sequence)
-    resolution = _resolution(cfg, mesh)
-    solver = cfg["solver"]
     omega = entry["tsr"] * entry["speed"] / float(cfg["turbine"]["radius"])
     t_rev = 2.0 * math.pi / omega
-    delta_t = float(resolution["delta_t"])
-    assert_tip_constraint(cfg, speed, mesh)
+    delta_t = solver_delta_t(cfg, mesh, solver)
+    assert_tip_constraint(cfg, speed, mesh, solver)
     return {
         "speed": entry["speed"],
         "tsr": entry["tsr"],
@@ -409,8 +457,8 @@ def kinematics(
         "omega": omega,
         "t_rev": t_rev,
         "delta_t": delta_t,
-        "end_time": float(solver["end_revolutions"]) * t_rev,
-        "write_interval": float(solver["write_interval_rev"]) * t_rev,
+        "end_time": float(cfg["solver"]["end_revolutions"]) * t_rev,
+        "write_interval": float(cfg["solver"]["write_interval_rev"]) * t_rev,
         "turbulence_intensity": float(cfg["inflow"]["turbulence_intensity"]),
         "mixing_length": float(cfg["inflow"]["mixing_length_D"])
         * float(cfg["turbine"]["diameter"]),
@@ -508,6 +556,12 @@ def _main(argv: list[str] | None = None) -> int:
              "an optional fourth value selects the sequence (H or S)",
     )
     parser.add_argument(
+        "--solver",
+        choices=SOLVER_CHOICES,
+        default="urans",
+        help="solver variant validated by --select (default: urans)",
+    )
+    parser.add_argument(
         "--target-cells",
         metavar="MESH",
         help="print the accepted cell-count band of a mesh as 'LOW HIGH'",
@@ -530,7 +584,7 @@ def _main(argv: list[str] | None = None) -> int:
                 raise KeyError("--select takes SPEED MESH MODEL [SEQUENCE]")
             if model not in ("alm", "asm"):
                 raise KeyError(f"unsupported model {model!r}; choose alm or asm")
-            values = kinematics(cfg, speed, mesh, sequence)
+            values = kinematics(cfg, speed, mesh, sequence, args.solver)
             print(json.dumps({"model": model, **values}, indent=2, sort_keys=True))
         elif args.target_cells:
             resolution = _resolution(cfg, args.target_cells)

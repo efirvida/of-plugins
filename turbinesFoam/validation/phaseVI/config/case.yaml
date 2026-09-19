@@ -120,6 +120,22 @@ solver:
   write_interval_rev: 0.5
   purge_write: 8
 
+# Stage 3 IDDES confirmation variant (`--solver iddes`). kOmegaSSTIDDES is an
+# LES model whose IDDESDelta-based delta function is mandatory:
+# kOmegaSSTIDDES::setDelta() aborts for cubeRootVol and any other LESdelta
+# (OpenFOAM.com v2506), so `delta` is IDDESDelta.
+iddes:
+  delta: IDDESDelta
+  delta_Cw: 0.15
+  # DES time step: same on every mesh, still below the tip-displacement bound
+  # (37.856 m/s * 0.0025 s = 0.0946 m < 0.1572 m D/64 hub cell).
+  delta_t: 0.0025
+  # DES-appropriate U convection (non-dissipative, unlike the URANS
+  # linearUpwind) and the wall-normal vectors requested up front because
+  # IDDESDelta reads wallDist::n().
+  div_phi_U: Gauss linear
+  wall_dist_n_required: true
+
 inflow:
   # Default speed; `--speed` selects the measured TSR per wind speed.
   velocity: 7.0
