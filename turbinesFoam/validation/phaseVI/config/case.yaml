@@ -163,10 +163,12 @@ stages:
     description: optional IDDES confirmation, nChordwise sweep, D/64 sensitivity
     queue: sequana_cpu_long
     optional: true
+    iddes: true
     models: [alm, asm]
-    meshes: [coarse, fine, ultra]
+    meshes: [fine, ultra]
     speeds: [7]
     n_chordwise: [1, 3, 5]
+    n_chordwise_mesh: fine
     executes: false
 
 actuator:
