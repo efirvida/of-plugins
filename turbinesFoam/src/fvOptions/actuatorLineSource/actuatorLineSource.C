@@ -31,6 +31,7 @@ License
 #include "geometricOneField.H"
 #include "syncTools.H"
 #include "simpleMatrix.H"
+#include <utility>
 
 // * * * * * * * * * * * * * Static Member Functions * * * * * * * * * * * * //
 
@@ -333,6 +334,16 @@ void Foam::fv::actuatorLineSource::createElements()
             coeffs_.lookupOrDefault("writeElementPerf", false)
         );
         dict.add("writePerf", writeElementPerf);
+        dict.add
+        (
+            "elementType",
+            coeffs_.lookupOrDefault<word>("elementType", "actuatorLineElement")
+        );
+        dict.add
+        (
+            "nChordwise",
+            coeffs_.lookupOrDefault<label>("nChordwise", 5)
+        );
 
         if (debug)
         {
@@ -351,11 +362,11 @@ void Foam::fv::actuatorLineSource::createElements()
             Info<< "Root distance (nondimensional): " << rootDistance << endl;
         }
 
-        actuatorLineElement* element = new actuatorLineElement
+        autoPtr<actuatorLineElement> element = actuatorLineElement::New
         (
             name, dict, mesh_
         );
-        elements_.set(i, element);
+        elements_.set(i, std::move(element));
         pitch = Foam::degToRad(pitch);
         elements_[i].pitch(pitch);
         elements_[i].setVelocity(initialVelocity);
