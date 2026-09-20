@@ -8,3 +8,7 @@
 lnInclude/
 platforms/
 **/Make/linux64GccDPInt64Opt/
+
+# Nacelle ASN validation run artefacts
+turbinesFoam/validation/nacelle-asn/runs/
+turbinesFoam/validation/nacelle-asn/results/

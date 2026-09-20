@@ -1,0 +1,44 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Website:  www.openfoam.com                      |
+|   \\  /    A nd           |                                                 |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// Generated from config/case.yaml. Do not edit by hand.
+
+// Standalone nacelle actuator surface source (rotor-less validation case):
+// the nacelle is represented only by this source, which distributes the
+// surface force onto the background grid (no body-fitted mesh).
+nacelle
+{
+    type            nacelleSurfaceSource;
+    active          true;
+
+    nacelleSurfaceSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             nacelleCells;
+
+        geometry            "../../../geometry/stl/nacelle.stl";
+        referenceVelocity   1;
+        rho                 1.0;
+        nu                  0.001;
+        cfModel             schultzGrunow;
+        cf                  -1.0;
+        bodyOrigin          (0 0 0);
+        bodyAxis            (1 0 0);
+        referenceArea       3.14159265359;
+        writeForceField     true;
+        writePerf           true;
+        writeNodePerf       false;
+    }
+}

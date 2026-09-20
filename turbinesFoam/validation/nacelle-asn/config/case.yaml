@@ -1,0 +1,117 @@
+# Single source of truth for the periodic-nacelle actuator-surface validation
+# case (Yang & Sotiropoulos, arXiv:1702.02108v4, Sec. 4.1).
+#
+# The case is rendered into `case/` by `tools/generate_case.py`; never edit the
+# generated files by hand (`generate_case.py --check` detects drift).
+#
+# The nacelle is represented ONLY by the standalone `nacelleSurfaceSource`
+# (no body-fitted mesh): the actuator surface distributes the surface force
+# onto the background grid. The surface comes from the shared geometry
+# pipeline (`turbinesFoam/geometry/stl/nacelle.stl`).
+project:
+  name: nacelle_asm_periodic
+  openfoam_versions: [v2506, v2412]
+
+# Nacelle = hemisphere (upstream) + cylinder (downstream), radius R, axis +x.
+# The pipeline STL is 7R long (hemisphere R + cylinder 6R) with the downstream
+# end at the streamwise origin: x in [-7R, 0].
+nacelle:
+  radius: 1.0
+  cylinder_ratio: 6.0
+  n_triangles: 2616          # committed pipeline artefact
+  paper_triangles: 2652      # paper target (~2652; the pipeline is -1.4 %)
+  # STL path relative to this package root (validation/nacelle-asn/). The
+  # renderer rewrites it relative to the rendered case directory, because the
+  # source resolves `geometry` against the case (or run) directory.
+  stl: ../../geometry/stl/nacelle.stl
+
+# Streamwise-periodic unit cell (30R x 20R x 20R). The downstream end of the
+# nacelle sits at the streamwise origin, so the cell splits into 10R upstream
+# and 20R downstream: 3R of re-entry fetch ahead of the nose, and every metric
+# station (1R..10R) stays interior to the downstream half.
+domain_R:
+  x: [-10.0, 20.0]
+  y: [-10.0, 10.0]
+  z: [-10.0, 10.0]
+
+boundaries:
+  streamwise: cyclic      # inlet <-> outlet (translationally periodic)
+  crosswise: symmetry     # free-slip side/top/bottom
+
+# Uniform blockMesh. The cell counts are the paper's grids. The 502x348x348
+# wall-resolved-LES reference resolution is declared for provenance only and is
+# never rendered as a run grid (`declared_only`, rejected by the CLI).
+mesh:
+  resolutions:
+    coarse:
+      cells: [153, 80, 80]
+    medium:
+      cells: [115, 151, 151]
+  reference:
+    cells: [502, 348, 348]
+    declared_only: true
+  # Cell set passed to the nacelle source: a box enclosing the body plus a
+  # kernel margin (the smoothed cosine kernel reaches ~5 cells, ~= 1R on the
+  # coarse grid).
+  cell_set_R:
+    x: [-8.0, 1.0]
+    y: [-2.0, 2.0]
+    z: [-2.0, 2.0]
+
+inflow:
+  velocity: 1.0                 # U_inf (m/s)
+  kinematic_viscosity: 1.0e-3   # nu (m^2/s) -> Re = U_inf R / nu = 1000
+  # k/omega are rendered for the URANS fallback only; the WALE headline runs a
+  # uniform periodic inflow and does not read them.
+  turbulence_intensity: 0.01
+  mixing_length_R: 1.0
+
+solver:
+  application: pimpleFoam
+  headline: wale              # LES WALE (documented adaptation of the paper)
+  fallback: urans             # k-omega SST smoke path, weaker claim
+  wale_model: WALE
+  urans_model: kOmegaSST
+  # Fixed step 0.1 R/U (paper): CFL 0.4 on the coarse grid, 0.75 on medium.
+  delta_t_R_U: 0.1
+  adjust_time_step: false
+
+# Run length / statistics. T_ft = Lx / U_inf = 30 R/U = 30 s.
+run:
+  flow_through_time_s: 30.0
+  wash_out_T: 2.0        # discard 2 T_ft before averaging
+  average_T: 5.0         # time-average over 5 T_ft
+  write_interval_s: 1.0  # 10 dt -> 150 samples in the averaging window
+  purge_write: 0
+
+decomposition:
+  number_of_subdomains: 48
+
+metrics:
+  stations_R: [1.0, 3.0, 5.0, 7.0]
+  stretch_R: 10.0
+  # u = time-averaged streamwise velocity; k = resolved turbulent kinetic
+  # energy from the velocity time series (not the fallback's modelled k field).
+  profiles: [u, k]
+  drag_coefficient: "|F_drag| / (0.5 rho U_inf^2 pi R^2)"
+  permeable_disk_datum: 0.48   # paper comparison datum, NOT an acceptance target
+
+# Acceptance is per station and per grid (paper Sec. 4.1 findings): the medium
+# grid must agree at all stations; the coarse grid only at 1R and the far wake
+# (its 3R-7R deficits are too large in the paper).
+acceptance:
+  medium: all_stations
+  coarse: [1.0, 10.0]
+
+# Staged run plan: stage0 (dev partition) prepares the mesh and a short
+# stability run now; production (long queue) runs the full averaging and must
+# NOT be submitted before explicit authorization.
+stages:
+  stage0:
+    description: blockMesh + checkMesh + short stability run (dev partition)
+    queue: sequana_cpu_dev
+    executes: true
+  production:
+    description: full wash-out + averaging (long queue; prepared only)
+    queue: sequana_cpu_long
+    executes: false
