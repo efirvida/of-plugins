@@ -118,6 +118,97 @@ runtime, while the ALM tutorial defaults to `0.5`.
   surface model's mesh-only epsilon is intended to be re-validated on a finer
   mesh where it gives 1–2 cells of overlap.
 
+## Nacelle surface model
+
+An optional nacelle/hub **actuator surface model** (`nacelleSurfaceSource`,
+Yang & Sotiropoulos, arXiv:1702.02108v4, Sec. 2.2) reads a triangulated surface
+from an STL file and applies the paper's direct-forcing normal force (Eq. 19)
+plus a friction-based tangential force (Eq. 21, Schultz–Grunow `cf` by default,
+Eq. 22), spread onto the background grid with the smoothed four-point cosine
+kernel (Eqs. 7, 8, 18). It carries no blade-element data and is usable
+standalone (a rotor-less `fvOptions` entry — the paper's periodic-nacelle case)
+or as an owned child of an axial-flow turbine via a `nacelle {}` subdictionary.
+
+### Configuration
+
+Standalone entry:
+
+```
+nacelle
+{
+    type            nacelleSurfaceSource;
+    active          true;
+
+    nacelleSurfaceSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             nacelleCells;
+
+        geometry            "geometry/nacelle.stl";  // required, ASCII/binary STL
+        referenceVelocity   1.0;                     // U for Eqs. 21, 22 [m/s]
+        rho                 1.0;                     // reference density for SI forces/CSV
+        nu                  -1.0;                    // >= 0 uses it; else transportProperties.nu
+        cfModel             schultzGrunow;           // or constant
+        cf                  -1.0;                    // constant override / calibration
+        bodyOrigin          (0 0 0);                 // sampling-contract body frame
+        bodyAxis            (1 0 0);
+        referenceArea       1.0;                     // cd = |F|/(0.5*rho*U^2*referenceArea)
+        writeForceField     true;                    // write force.<name>
+        writePerf           true;                    // postProcessing/nacelle/<name>.csv
+        writeNodePerf       false;                   // postProcessing/nacelle/<name>_nodes.csv
+    }
+}
+```
+
+Composed through `axialFlowTurbineALSource`, which builds the source in
+`createNacelle()` from the `nacelle {}` subdictionary (inheriting
+`fieldNames`/`selectionMode`/`cellSet` and using `mag(freeStreamVelocity)` as
+`referenceVelocity`):
+
+```
+nacelle
+{
+    geometry            "geometry/nacelle.stl";
+    cfModel             schultzGrunow;
+    // ... any nacelleSurfaceSourceCoeffs key except the inherited ones
+}
+```
+
+Output: `postProcessing/nacelle/<name>.csv` with
+`time,fx,fy,fz,f_n_mag,f_tau_mag,cd` (total force on the body in newtons,
+`cd` from `referenceArea`) and, with `writeNodePerf true`,
+`postProcessing/nacelle/<name>_nodes.csv` with the per-node body-frame
+positions/normals/forces (`time,node,x,y,z,nx,ny,nz,fx,fy,fz,area`). The
+distributed field is registered as `force.<name>` and is force per unit volume
+per unit density, matching the incompressible `fvOptions` convention; the
+compressible overload weights it by the local density.
+
+### Notes
+
+- **Friction-model limits:** Schultz–Grunow assumes a zero-pressure-gradient
+  turbulent boundary layer and is keyed by the streamwise distance behind the
+  nose (`Rex = U·x/ν`). In the hemisphere nose region `Rex → 0`, the relation
+  is invalid, so `cf` is set to zero there and the nose friction is
+  under-predicted by construction. Use a constant `cf` override for
+  calibration studies.
+- **MPI:** every rank holds the full node list and applies each node force to
+  its own cells within the kernel support (a 5³-cell stencil). A node whose
+  containing cell sits on another rank is resolved with a `findCell` and
+  reduce/minimum sentinel; a sample that is unreachable on every rank is a
+  fatal error.
+- **`h` and `ũ`:** `h = cbrt(V_cell)` of the containing cell, and `ũ` is the
+  current `eqn.psi()` iterand (PIMPLE does not expose the paper's predicted
+  velocity) — both are documented adaptations.
+- **Tests:** `tests/test_nacelle.py` runs the standalone case in serial and on
+  two ranks (`tests/nacelleSurface`, a two-triangle plate with an analytic
+  force), checks the CSV and total-force preservation, and asserts the fatal
+  error paths for missing, empty and unparseable STL files.
+- **Fork divergence:** `nacelleSurfaceSource`/`nacelleSurfaceSampler` and the
+  `createNacelle()` wiring are new in this fork and are not part of upstream
+  turbinesFoam. The nacelle is static — `rotate`, `tilt` and `yaw` move the
+  blades and hub only.
+
 ## Publications
 
 Bachant, P., Goude, A., and Wosnik, M. (2016) [_Actuator line modeling of vertical-axis turbines_](https://arxiv.org/abs/1605.01449). arXiv preprint 1605.01449.
