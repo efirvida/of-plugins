@@ -470,7 +470,35 @@ void Foam::fv::axialFlowTurbineALSource::createTower()
 
 void Foam::fv::axialFlowTurbineALSource::createNacelle()
 {
-    // Do nothing
+    dictionary nacelleSubDict = nacelleDict_;
+
+    // Inherit the turbine's selection and field configuration
+    nacelleSubDict.add("fieldNames", coeffs_.lookup("fieldNames"));
+    nacelleSubDict.add("selectionMode", coeffs_.lookup("selectionMode"));
+    nacelleSubDict.add("cellSet", coeffs_.lookup("cellSet"));
+
+    // The nacelle is stationary: the reference incoming velocity is the
+    // free-stream magnitude
+    nacelleSubDict.add("referenceVelocity", mag(freeStreamVelocity_));
+
+    // Do not write the nacelle force field unless specified
+    nacelleSubDict.lookupOrAddDefault("writeForceField", false);
+
+    dictionary dict;
+    dict.add("nacelleSurfaceSourceCoeffs", nacelleSubDict);
+    dict.add("type", "nacelleSurfaceSource");
+    dict.add("active", dict_.lookup("active"));
+
+    nacelle_.reset
+    (
+        new nacelleSurfaceSource
+        (
+            name_ + ".nacelle",
+            "nacelleSurfaceSource",
+            dict,
+            mesh_
+        )
+    );
 }
 
 

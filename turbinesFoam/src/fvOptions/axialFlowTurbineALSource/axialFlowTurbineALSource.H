@@ -36,6 +36,7 @@ SourceFiles
 #define axialFlowTurbineALSource_H
 
 #include "turbineALSource.H"
+#include "nacelleSurfaceSource.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -72,8 +73,8 @@ protected:
         //- Actuator line for tower
         autoPtr<actuatorLineSource> tower_;
 
-        //- Actuator line for nacelle
-        autoPtr<actuatorLineSource> nacelle_;
+        //- Actuator surface source for nacelle
+        autoPtr<nacelleSurfaceSource> nacelle_;
 
         //- Hub dictionary
         dictionary hubDict_;
