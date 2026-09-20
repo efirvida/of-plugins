@@ -1,0 +1,17 @@
+# Generated run artifacts (the case itself is committed)
+
+# Time directories (blockMesh/Allrun write 0, 0.1, ...); keep the 0.org template
+/0
+/[0-9]*/
+!/0.org/
+
+# Generated mesh and cell set
+constant/polyMesh/
+constant/cellSet/
+
+# Output and parallel decomposition
+postProcessing/
+processor*/
+
+# Solver logs
+log.*

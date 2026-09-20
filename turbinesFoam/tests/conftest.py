@@ -21,6 +21,7 @@ SOLVER_DRIVEN = (
     "test_asm.py",
     "test_cftal.py",
     "test_libs.py",
+    "test_nacelle.py",
 )
 
 

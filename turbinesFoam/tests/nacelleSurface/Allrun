@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Standalone nacelleSurfaceSource case. The args are:
+# $1: `-parallel` or nothing
+#
+# The source is constructed, applied once on a uniform velocity field and
+# writes its force CSV; one time step is enough for the integration checks.
+
+cd ${0%/*} || exit 1    # run from this directory
+
+# Source tutorial run functions
+. $WM_PROJECT_DIR/bin/tools/RunFunctions
+
+# Copy initial conditions
+cp -rf 0.org 0
+
+runApplication blockMesh
+runApplication topoSet
+
+if [ "$1" = "-parallel" ]
+then
+    runApplication decomposePar
+    runParallel pimpleFoam
+else
+    runApplication pimpleFoam
+fi
+
+# ----------------------------------------------------------------- end-of-file

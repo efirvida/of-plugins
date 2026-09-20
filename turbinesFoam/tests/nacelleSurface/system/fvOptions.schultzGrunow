@@ -1,0 +1,47 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Variant of the standalone nacelle case using the default Schultz-Grunow
+// friction relation (Eq. 22) instead of a constant cf override. The plate is
+// tilted about the z axis so that the nodes span the streamwise direction and
+// the friction coefficient varies from node to node.
+
+nacelle
+{
+    type            nacelleSurfaceSource;
+    active          true;
+
+    nacelleSurfaceSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             nacelleCells;
+
+        geometry            "geometry/plateTilted.stl";
+        referenceVelocity   1.0;
+        rho                 1.0;
+        nu                  1.0e-3;
+        cfModel             schultzGrunow;
+        bodyOrigin          (0 0 0);
+        bodyAxis            (1 0 0);
+        referenceArea       0.04;
+        writeForceField     true;
+        writePerf           true;
+        writeNodePerf       true;
+    }
+}
+
+// ************************************************************************* //
