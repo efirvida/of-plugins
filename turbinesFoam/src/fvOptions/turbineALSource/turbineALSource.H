@@ -39,6 +39,7 @@ SourceFiles
 #include "NamedEnum.H"
 #include "actuatorLineSource.H"
 #include "volFieldsFwd.H"
+#include "uniformDimensionedFields.H"
 #include "OFstream.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
@@ -82,6 +83,12 @@ protected:
 
         //- Azimuthal angle in degrees (does not reset each rotation)
         scalar angleDeg_;
+
+        //- Azimuth in degrees at the start of the current interval
+        scalar angle0_;
+
+        //- Start time of the current azimuth interval
+        scalar t0_;
 
         //- Number of blades
         label nBlades_;
@@ -149,6 +156,18 @@ protected:
         //- Mean tip speed ratio
         scalar meanTSR_;
 
+        //- Whether the omega override field is configured
+        bool hasOmegaOverride_;
+
+        //- Name of the registry omega override field
+        word omegaOverrideField_;
+
+        //- Owner of the omega override field when created by this source
+        autoPtr<uniformDimensionedScalarField> omegaOverrideFieldPtr_;
+
+        //- Persisted azimuth field, "angleDeg.<name>" (degrees, dimensionless)
+        autoPtr<uniformDimensionedScalarField> angleDegField_;
+
         //- Individual blade moments about turbine origin
         List<vector> bladeMoments_;
 
@@ -172,6 +191,16 @@ protected:
 
         //- Update tip speed ratio and angular velocity
         virtual void updateTSROmega();
+
+        //- Return the azimuth (degrees) at time t from the integrated
+        //  omega law over [t0_, t], a pure function of (t0_, angle0_, t)
+        scalar azimuth(const scalar t) const;
+
+        //- Initialise the persisted azimuth field and the restart state
+        void createAngleDegField();
+
+        //- Create the omega override field if it does not already exist
+        void createOmegaOverrideField();
 
         //- Rotate the turbine according to its angular velocity and time step
         virtual void rotate();
@@ -214,6 +243,9 @@ public:
 
             //- Return the reference density for incompressible case
             inline scalar rhoRef() const;
+
+            //- Return the current azimuth in degrees
+            scalar angleDeg() const;
 
 
         // Source term addition
