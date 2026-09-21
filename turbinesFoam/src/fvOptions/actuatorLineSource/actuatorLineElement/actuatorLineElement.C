@@ -622,6 +622,18 @@ const Foam::vector& Foam::fv::actuatorLineElement::chordDirection() const
 }
 
 
+const Foam::scalar& Foam::fv::actuatorLineElement::chordMount() const
+{
+    return chordMount_;
+}
+
+
+const Foam::dictionary& Foam::fv::actuatorLineElement::profileDict()
+{
+    return profileData_.dict();
+}
+
+
 const Foam::vector& Foam::fv::actuatorLineElement::spanDirection() const
 {
     return spanDirection_;

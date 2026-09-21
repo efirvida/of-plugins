@@ -15,5 +15,6 @@ fvOptions/actuatorLineSource/actuatorLineElement/profileData/profileData.C
 fvOptions/nacelleSurface/nacelleSurfaceSampler.C
 fvOptions/nacelleSurface/nacelleSurfaceSource.C
 fvOptions/nacelleSurface/surfaceSamplerBase.C
+fvOptions/bladeSurface/bladeSurfaceSampler.C
 
 LIB = $(FOAM_USER_LIBBIN)/libturbinesFoam

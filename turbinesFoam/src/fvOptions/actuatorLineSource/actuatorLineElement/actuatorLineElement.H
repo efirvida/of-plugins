@@ -311,6 +311,14 @@ public:
             //- Return the element chord direction (trailing to leading edge)
             const vector& chordDirection() const;
 
+            //- Return the element chord mount fraction (LE-based, 0 at the
+            //  leading edge)
+            const scalar& chordMount() const;
+
+            //- Return the element profile data dictionary (GaussianCoeffs
+            //  etc.), as copied into the element dictionary
+            const dictionary& profileDict();
+
             //- Return the element span direction (the element pitch axis)
             const vector& spanDirection() const;
 
