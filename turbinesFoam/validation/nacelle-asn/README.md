@@ -22,7 +22,8 @@ surface force onto the background grid.
 | Solver | `pimpleFoam`, fixed `deltaT = 0.1 R/U`, `adjustTimeStep off` |
 | Closure | **LES WALE** headline; URANS k-ω SST fallback (`--solver urans`) |
 | Run length | wash-out `2 T_ft`, time-averaging `5 T_ft` (`T_ft = Lx/U∞ = 30 s`) |
-| Sampling | `writeInterval 1 s` (10 Δt) → 150 samples in the averaging window |
+| Sampling | `writeInterval 1 s` (10 Δt) → 150 writes in the averaging window |
+| Profile probes | vertical lines through the wake at every metric station, probed **every** time step (`writeControl timeStep`) → the 0.1 s series in `postProcessing/profiles/` |
 
 Grids (uniform `blockMesh`; the paper's 502x348x348 wall-resolved-LES reference
 is declared in the config only and is never rendered as a run grid):
@@ -32,6 +33,32 @@ is declared in the config only and is never rendered as a run grid):
 | coarse | 153 x 80 x 80 | 0.98 M |
 | medium | 115 x 151 x 151 | 2.62 M |
 | reference (not generated) | 502 x 348 x 348 | 60.8 M |
+
+**Grid spacings are derived from the cell counts**, not the other way round: the
+counts are the paper's grids and the config declares only `cells`. Over the
+30R x 20R x 20R domain they give `Δx = 30R/153 ≈ R/5.1` and
+`Δy = Δz = 20R/80 = R/4` (coarse), `Δx ≈ R/3.8` and
+`Δy = Δz ≈ R/7.6` (medium). Exploration-time notes quoting `Δx = R/2.5`
+(coarse) / `R/3.75` (medium) are inconsistent with the rendered counts and are
+superseded by `generate_case.py`'s `cell_size_R()`: no rendered file or script
+asserts those Δ values.
+
+## Profile sampling and stations
+
+The rendered case adds a `probes` function object (`profileSamples`) that writes
+the velocity time series on a vertical line through the wake at every metric
+station (`1R, 3R, 5R, 7R` plus the `10R` stretch), at cell centres nearest the
+declared line (at most half a cell away; the offset is recorded in
+`metrics.json`). `scripts/compareNacelle.py` consumes that series to form the
+time-averaged `⟨u⟩(z)` and the **resolved** TKE `k(z) = 1/2 ⟨u'_i u'_i⟩` over the
+configured window `[2 T_ft, 7 T_ft]`.
+
+Station reconciliation (`10R`): the paper's panels are at **odd** multiples of
+`R` (1R..19R) — there is no `10R` panel. A declared station with an exact panel
+(`1R/3R/5R/7R`) is compared against it; the `10R` stretch is **bracketed** by
+the `9R` and `11R` panels and its acceptance uses the worse of the two. No `10R`
+reference profile is invented, and `metrics.json` records the mapping and the
+`±1R` offsets.
 
 ## Staged run plan
 
@@ -55,6 +82,35 @@ stations; the **coarse** grid only at `1R` and the far wake (the paper reports
 coarse deficits too large at 3R–7R). The paper's permeable-disk `CD = 0.48` is a
 **comparison datum, not a target**.
 
+The bands are package choices (the paper compares graphically) and are
+configurable: RMS deviation over the profile `rms(⟨u⟩) ≤ 0.10 u/U∞` and
+`rms(k) ≤ 0.02 k/U∞²` (`--band-u` / `--band-k`). A claimed station outside its
+band exits non-zero; unclaimed stations are reported but do not fail the run.
+
+## Running and comparing
+
+```sh
+# render / check the committed skeleton
+python3 tools/generate_case.py --check
+
+# prepare and run one variant (inside an allocation for --run)
+scripts/runNacelle.sh --mesh coarse [--solver wale|urans] [--ranks N] --run
+scripts/runNacelle.sh --mesh coarse --stage0 --run --ranks 48   # short stability
+
+# staged Slurm jobs (see the scripts for the environment recipe)
+sbatch scripts/slurm/stage0.slurm         # dev partition, authorized
+# sbatch scripts/slurm/production.slurm   # long queue: PREPARED ONLY
+
+# compare a finished run against the digitized reference
+python3 scripts/compareNacelle.py --run-dir runs/nacelle-coarse --mesh coarse
+```
+
+`runNacelle.sh` refuses to run on a non-development partition without
+`NACELLE_LONG_QUEUE_AUTHORIZED=1`, removes stale `log.*` before running (OpenFOAM
+skips a step whose log already exists), and never submits the production job.
+`compareNacelle.py` writes `metrics.json`, `profiles.csv` and `report.txt` under
+`results/<run-id>/`.
+
 ## Closure adaptation and limitations
 
 - The paper's dynamic SGS model (Eq. 25) is **not available in standard
@@ -64,6 +120,10 @@ coarse deficits too large at 3R–7R). The paper's permeable-disk `CD = 0.48` is
   and no resolved boundary layer.
 - The reference is the paper's 502x348x348 wall-resolved LES; it is not
   reproduced by this package.
+- The probes sit at the cell centres nearest the declared station lines (at most
+  half a cell away, recorded per station) so no probe lands on a cell face or a
+  processor boundary; the `10R` stretch is compared against the `9R`/`11R`
+  bracket, not an exact panel.
 - URANS k-ω SST is a cheaper smoke **fallback** with a weaker claim; it is not
   the headline.
 
@@ -73,6 +133,10 @@ coarse deficits too large at 3R–7R). The paper's permeable-disk `CD = 0.48` is
 config/case.yaml          single source of truth (YAML)
 tools/generate_case.py    renderer + non-destructive --check
 case/                     committed generated skeleton (never edited by hand)
+scripts/compareNacelle.py compare a run against the digitized reference
+scripts/runNacelle.sh     prepare / run / submit one variant (queue gates)
+scripts/slurm/            staged jobs (stage0 executes; production prepared only)
+data/reference/           digitized wall-resolved-LES profiles + PROVENANCE
 runs/                     rendered run directories (gitignored)
 results/                  comparison output (gitignored)
 ```
@@ -84,9 +148,10 @@ python3 tools/generate_case.py            # render the committed case/
 python3 tools/generate_case.py --check    # exit 1 on missing/stale, never writes
 ```
 
-`--mesh coarse|medium`, `--solver wale|urans`, `--ranks N`, `--case-dir DIR`.
-Rendered files carry a "Generated from config/case.yaml" banner; `case/` is the
-only committed copy and hand edits are detected by `--check`.
+`--mesh coarse|medium`, `--solver wale|urans`, `--ranks N`, `--case-dir DIR`,
+`--end-time T` (the stage0 stability bound) and `--start-from latestTime`
+(restart). Rendered files carry a "Generated from config/case.yaml" banner;
+`case/` is the only committed copy and hand edits are detected by `--check`.
 
 ## Attribution
 
