@@ -136,6 +136,8 @@ def validate_config(cfg: dict[str, Any]) -> None:
     nu = float(inflow["kinematic_viscosity"])
     if velocity <= 0.0 or nu <= 0.0:
         raise ValueError("inflow.velocity and inflow.kinematic_viscosity must be positive")
+    if float(inflow["density"]) <= 0.0:
+        raise ValueError("inflow.density must be positive")
     if float(inflow["turbulence_intensity"]) < 0.0:
         raise ValueError("inflow.turbulence_intensity must not be negative")
     if float(inflow["mixing_length_R"]) <= 0.0:
@@ -194,6 +196,17 @@ def validate_config(cfg: dict[str, Any]) -> None:
             "acceptance.coarse must not claim the 3R-7R stations (the paper "
             "reports coarse deficits too large there)"
         )
+
+    sampling = cfg["sampling"]
+    z_low, z_high = (float(value) for value in sampling["z_R"])
+    if z_low >= z_high:
+        raise ValueError("sampling.z_R extents must be increasing")
+    if float(sampling["dz_R"]) <= 0.0:
+        raise ValueError("sampling.dz_R must be positive")
+    # Every reference profile spans |z/D| <= 1.32 with D = 2R, so the sampled
+    # line must cover that span on both sides of the axis.
+    if z_high - z_low < 2.0 * 1.32 * radius:
+        raise ValueError("sampling.z_R must cover the reference profiles (|z/D| <= 1.32)")
 
     _validate_stages(cfg)
 
@@ -274,6 +287,59 @@ def cell_set_box(cfg: dict[str, Any]) -> tuple[tuple[float, ...], tuple[float, .
     minimum = tuple(float(box[axis][0]) for axis in ("x", "y", "z"))
     maximum = tuple(float(box[axis][1]) for axis in ("x", "y", "z"))
     return minimum, maximum
+
+
+def sampling_stations_R(cfg: dict[str, Any]) -> list[float]:
+    """Metric stations that get a profile line: stations + far-wake stretch."""
+    return [float(value) for value in cfg["metrics"]["stations_R"]] + [
+        float(cfg["metrics"]["stretch_R"])
+    ]
+
+
+def profile_targets_R(cfg: dict[str, Any]) -> list[float]:
+    """Target z coordinates (R units) of the vertical profile lines."""
+    sampling = cfg["sampling"]
+    low, high = (float(value) for value in sampling["z_R"])
+    step = float(sampling["dz_R"])
+    count = int(round((high - low) / step)) + 1
+    return [low + index * step for index in range(count)]
+
+
+def _snap_to_cell_centre(
+    cfg: dict[str, Any], mesh: str, axis: str, value: float
+) -> float:
+    """Cell centre (R units) of a run grid nearest to `value` on one axis."""
+    low, high = domain_extents_R(cfg)[axis]
+    count = dict(zip(("x", "y", "z"), cell_counts(cfg, mesh)))[axis]
+    size = (high - low) / count
+    index = int(round((value - low) / size - 0.5))
+    index = max(0, min(count - 1, index))
+    return low + (index + 0.5) * size
+
+
+def probe_locations(cfg: dict[str, Any], mesh: str = "coarse") -> list[tuple[float, ...]]:
+    """Probe points (R units) on the metric-station lines, at cell centres.
+
+    A point on a cell face (or on a processor boundary) is found in an
+    arbitrary cell and warns under decomposition, so every probe is snapped to
+    the nearest cell centre. The offset from the declared station is at most
+    half a cell and is recorded by `scripts/compareNacelle.py`.
+    """
+    locations: list[tuple[float, ...]] = []
+    for station in sampling_stations_R(cfg):
+        x = _snap_to_cell_centre(cfg, mesh, "x", station)
+        # y = 0 is a grid plane whenever the crosswise count is even; the
+        # nearest centre keeps the line inside the wake.
+        y = _snap_to_cell_centre(cfg, mesh, "y", 0.0)
+        z_values: list[float] = []
+        for z_target in profile_targets_R(cfg):
+            z = _snap_to_cell_centre(cfg, mesh, "z", z_target)
+            # Coarse grids merge neighbouring targets onto the same centre.
+            if z_values and math.isclose(z, z_values[-1], rel_tol=0.0, abs_tol=1e-12):
+                continue
+            z_values.append(z)
+        locations.extend((x, y, z) for z in z_values)
+    return locations
 
 
 def delta_t(cfg: dict[str, Any]) -> float:
@@ -420,13 +486,29 @@ def render_toposet(cfg: dict[str, Any]) -> str:
 """
 
 
-def render_control_dict(cfg: dict[str, Any]) -> str:
+def render_control_dict(
+    cfg: dict[str, Any],
+    mesh: str = "coarse",
+    end_time: float | None = None,
+    start_from: str = "startTime",
+) -> str:
+    """controlDict with the metric-station profile probes.
+
+    `end_time` overrides the configured run length (the stage0 stability run
+    stops early); `start_from latestTime` resumes a restarted run.
+    """
     times = run_times(cfg)
+    end = times["end_time"] if end_time is None else float(end_time)
+    if start_from not in ("startTime", "latestTime"):
+        raise ValueError(f"unsupported startFrom: {start_from!r}")
+    probes = "\n".join(
+        f"            {foam_vector(point)}" for point in probe_locations(cfg, mesh)
+    )
     return foam_header("controlDict") + f"""application {cfg['solver']['application']};
-startFrom startTime;
+startFrom {start_from};
 startTime 0;
 stopAt endTime;
-endTime {times['end_time']:.8g};
+endTime {end:.8g};
 deltaT {times['delta_t']:.8g};
 writeControl runTime;
 writeInterval {times['write_interval']:.8g};
@@ -443,6 +525,32 @@ libs
 (
     "libturbinesFoam.so"
 );
+
+functions
+{{
+    // Velocity time series on the metric-station lines through the wake,
+    // consumed by `scripts/compareNacelle.py` for the time-averaged <u>(z) and
+    // the resolved TKE k(z) = 1/2 <u'_i u'_i>. Probed every time step: the
+    // resolved TKE needs the full 0.1 s series, not the field-write cadence.
+    profileSamples
+    {{
+        // Where to load it from
+        libs            (sampling);
+
+        type            probes;
+        name            profiles;
+
+        writeControl    timeStep;
+        writeInterval   1;
+
+        fields          (U);
+
+        probeLocations
+        (
+{probes}
+        );
+    }}
+}}
 """
 
 
@@ -673,7 +781,7 @@ nacelle
 
         geometry            "{geometry}";
         referenceVelocity   {float(inflow['velocity']):.8g};
-        rho                 1.0;
+        rho                 {float(inflow['density']):.8g};
         nu                  {float(inflow['kinematic_viscosity']):.8g};
         cfModel             schultzGrunow;
         cf                  -1.0;
@@ -694,6 +802,8 @@ def outputs(
     solver: str,
     case_dir: Path,
     ranks: int | None = None,
+    end_time: float | None = None,
+    start_from: str = "startTime",
 ) -> dict[Path, str]:
     check_solver(solver)
     system = case_dir / "system"
@@ -702,7 +812,7 @@ def outputs(
     rendered: dict[Path, str] = {
         system / "blockMeshDict": render_block_mesh(cfg, mesh),
         system / "topoSetDict": render_toposet(cfg),
-        system / "controlDict": render_control_dict(cfg),
+        system / "controlDict": render_control_dict(cfg, mesh, end_time, start_from),
         system / "decomposeParDict": render_decompose_par(cfg, ranks),
         system / "fvSchemes": render_fv_schemes(cfg, solver),
         system / "fvSolution": render_fv_solution(cfg),
@@ -771,6 +881,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--case-dir", type=Path, default=DEFAULT_CASE_DIR)
     parser.add_argument(
+        "--end-time",
+        type=float,
+        default=None,
+        metavar="T",
+        help="override the rendered endTime (s); the stage0 stability run "
+             "stops early with this",
+    )
+    parser.add_argument(
+        "--start-from",
+        choices=("startTime", "latestTime"),
+        default="startTime",
+        help="controlDict startFrom; latestTime resumes a restarted run",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="fail (exit 1) if generated files are missing or stale; never writes",
@@ -780,7 +904,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = load_config(args.config)
         case_dir = args.case_dir.resolve()
-        rendered = outputs(cfg, args.mesh, args.solver, case_dir, args.ranks)
+        rendered = outputs(
+            cfg,
+            args.mesh,
+            args.solver,
+            case_dir,
+            args.ranks,
+            args.end_time,
+            args.start_from,
+        )
     except (KeyError, ValueError) as exc:
         print(f"case generation error: {exc}", file=sys.stderr)
         return 2

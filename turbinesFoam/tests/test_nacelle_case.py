@@ -145,6 +145,52 @@ def test_control_dict_run_schedule(cfg):
     assert times["samples"] == 150
 
 
+def test_sampling_function_object(cfg):
+    """The rendered case probes the metric-station lines every time step.
+
+    `scripts/compareNacelle.py` reads those series for <u>(z) and the resolved
+    TKE k(z), so the sampling contract is part of the case, not of the compare
+    tool.
+    """
+    assert cfg["inflow"]["density"] == 1.0
+    sampling = cfg["sampling"]
+    low, high = sampling["z_R"]
+    assert low < 0.0 < high
+    assert sampling["dz_R"] > 0.0
+
+    stations = generate_case.sampling_stations_R(cfg)
+    assert stations == [1.0, 3.0, 5.0, 7.0, 10.0]
+
+    for mesh in ("coarse", "medium"):
+        text = generate_case.render_control_dict(cfg, mesh)
+        assert "type            probes;" in text
+        assert "libs            (sampling);" in text
+        assert "name            profiles;" in text
+        assert "fields          (U);" in text
+        assert "writeControl    timeStep;" in text
+        assert "probeLocations" in text
+
+        locations = generate_case.probe_locations(cfg, mesh)
+        assert len(set(locations)) == len(locations)  # no duplicate probe
+        station_lines = {round(point[0], 9) for point in locations}
+        assert len(station_lines) == len(stations)
+        z_span = max(point[2] for point in locations) - min(
+            point[2] for point in locations
+        )
+        # The lines must cover the reference profiles (|z/D| <= 1.32, D = 2R).
+        assert z_span > 2.0 * 1.32 * cfg["nacelle"]["radius"]
+        for point in locations:
+            for axis, value in zip(("x", "y", "z"), point):
+                low, high = cfg["domain_R"][axis]
+                assert low < value < high
+
+    committed = (CASE_DIR / "system" / "controlDict").read_text(encoding="utf-8")
+    assert committed == generate_case.render_control_dict(cfg, "coarse")
+    assert "type            nacelleSurfaceSource;" in (
+        CASE_DIR / "system" / "fvOptions"
+    ).read_text(encoding="utf-8")
+
+
 def test_turbulence_headline_and_fallback(cfg):
     les = generate_case.render_turbulence_properties(cfg)
     assert "simulationType LES;" in les

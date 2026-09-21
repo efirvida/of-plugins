@@ -61,6 +61,7 @@ mesh:
 inflow:
   velocity: 1.0                 # U_inf (m/s)
   kinematic_viscosity: 1.0e-3   # nu (m^2/s) -> Re = U_inf R / nu = 1000
+  density: 1.0                  # rho (kg/m^3): the source `rho` key and the CD reference density
   # k/omega are rendered for the URANS fallback only; the WALE headline runs a
   # uniform periodic inflow and does not read them.
   turbulence_intensity: 0.01
@@ -83,6 +84,19 @@ run:
   average_T: 5.0         # time-average over 5 T_ft
   write_interval_s: 1.0  # 10 dt -> 150 samples in the averaging window
   purge_write: 0
+
+# Vertical-profile sampling for the compare tool. The rendered case probes the
+# velocity time series on a vertical line through the wake at every metric
+# station (the stations above plus the far-wake stretch), so
+# `scripts/compareNacelle.py` can form the time-averaged <u>(z) and the
+# resolved TKE k(z) = 1/2 <u'_i u'_i> from the full 0.1 s series rather than
+# the 1 s field-write cadence. The extent covers the reference profiles
+# (|z/D| <= 1.32, D = 2R) with margin; each probe sits at the cell centre
+# nearest the declared line, because a point on a face (or a processor
+# boundary) resolves to an arbitrary cell.
+sampling:
+  z_R: [-2.8, 2.8]
+  dz_R: 0.2
 
 decomposition:
   number_of_subdomains: 48

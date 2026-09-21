@@ -30,7 +30,7 @@ nacelle
 
         geometry            "../../../geometry/stl/nacelle.stl";
         referenceVelocity   1;
-        rho                 1.0;
+        rho                 1;
         nu                  0.001;
         cfModel             schultzGrunow;
         cf                  -1.0;
