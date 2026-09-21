@@ -330,6 +330,34 @@ def test_short_window_exit_codes(tmp_path):
     assert read_metrics(out_allowed)["window"]["mode"] == "short"
 
 
+def test_short_window_falls_back_for_the_force_series_too(tmp_path):
+    """A run that never reaches the averaging window still compares when allowed.
+
+    A stage0 stability check stops at 2 s while the configured window is
+    [60, 210] s. `--allow-short-window` must fall back for the probe series AND
+    the force series: otherwise CD cannot be formed from the only real run the
+    package can launch without authorization.
+    """
+    times = [round(0.1 * index, 1) for index in range(1, 21)]  # 0.1 .. 2.0 s
+    run = write_run(tmp_path / "run-coarse", times=times)
+    assert compare.main([
+        "--run-dir", str(run), "--out", str(tmp_path / "out"),
+    ]) == compare.EXIT_SHORT_WINDOW
+
+    out_allowed = tmp_path / "out-allowed"
+    assert compare.main([
+        "--run-dir", str(run), "--out", str(out_allowed), "--allow-short-window",
+    ]) == compare.EXIT_OK
+    metrics = read_metrics(out_allowed)
+    assert metrics["window"]["mode"] == "short"
+    assert metrics["drag"]["samples"] == len(times)
+    assert metrics["drag"]["time_range_s"][0] == pytest.approx(times[0])
+    assert metrics["drag"]["time_range_s"][1] == pytest.approx(times[-1])
+    assert metrics["drag"]["cd"] == pytest.approx(
+        float(f"{0.754:.8g}") / (0.5 * math.pi), rel=1.0e-12
+    )
+
+
 def test_fail_loud_exit_codes(tmp_path):
     missing = compare.main([
         "--run-dir", str(tmp_path / "missing"), "--out", str(tmp_path / "o1"),

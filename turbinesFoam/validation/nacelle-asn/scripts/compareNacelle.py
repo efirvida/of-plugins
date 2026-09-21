@@ -480,13 +480,22 @@ def read_force_csv(path: Path) -> list[dict[str, float]]:
     return rows
 
 
-def drag_coefficient(rows, cfg, start: float, end: float) -> dict:
-    """CD from the mean streamwise force on the body (config definition)."""
+def drag_coefficient(rows, cfg, start: float, end: float,
+                     allow_short: bool = False) -> dict:
+    """CD from the mean streamwise force on the body (config definition).
+
+    `allow_short` mirrors the probe-series fallback: a run that never reaches
+    the configured averaging window (the stage0 stability check) averages every
+    force sample it has instead of failing, and the sample time range is
+    recorded so the report cannot claim the full window.
+    """
     window = [row for row in rows if start <= row["time"] <= end]
     if not window:
-        raise ShortWindow(
-            f"no force samples in the averaging window [{start:g}, {end:g}] s"
-        )
+        if not allow_short:
+            raise ShortWindow(
+                f"no force samples in the averaging window [{start:g}, {end:g}] s"
+            )
+        window = rows
     radius = float(cfg["nacelle"]["radius"])
     velocity = float(cfg["inflow"]["velocity"])
     density = float(cfg["inflow"]["density"])
@@ -500,6 +509,10 @@ def drag_coefficient(rows, cfg, start: float, end: float) -> dict:
     reference = 0.5 * density * velocity**2 * math.pi * radius**2
     return {
         "samples": len(window),
+        "time_range_s": [
+            min(row["time"] for row in window),
+            max(row["time"] for row in window),
+        ],
         "mean_fx_n": mean_fx,
         "mean_fy_n": sum(row["fy"] for row in window) / len(window),
         "mean_fz_n": sum(row["fz"] for row in window) / len(window),
@@ -564,7 +577,8 @@ def build_report(summary: dict) -> str:
         f"{summary['case']['samples']} samples",
         f"averaging window: [{summary['window']['start_s']:g}, "
         f"{summary['window']['end_s']:g}] s "
-        f"({summary['window']['t_ft_s']:g} s flow-through time)",
+        f"({summary['window']['mode']}, "
+        f"{summary['window']['samples_in_window']} samples)",
         "",
         "Metric definitions:",
         "  <u>(z)/U_inf  time-mean streamwise velocity on the station line",
@@ -593,7 +607,8 @@ def build_report(summary: dict) -> str:
     lines += [
         "",
         f"CD = {drag['cd']:.6g} (from mean fx = {drag['mean_fx_n']:.6g} N over "
-        f"{drag['samples']} samples)",
+        f"{drag['samples']} samples, "
+        f"[{drag['time_range_s'][0]:g}, {drag['time_range_s'][1]:g}] s)",
         f"  source CSV cd (cross-check): {drag['cd_from_csv']:.6g}"
         if drag["cd_from_csv"] is not None else "  source CSV cd: n/a",
         f"  paper permeable-disk datum: {summary['datum']['cd']:g} "
@@ -699,7 +714,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
         verdict = "PASS" if not failures else "FAIL: " + ", ".join(failures)
 
-        drag = drag_coefficient(force_rows, cfg, start, end)
+        drag = drag_coefficient(force_rows, cfg, start, end, args.allow_short_window)
 
         out_dir = args.out if args.out is not None else DEFAULT_RESULTS / run_dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
