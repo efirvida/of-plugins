@@ -66,7 +66,7 @@ reference profile is invented, and `metrics.json` records the mapping and the
 
 - **stage0** (`sequana_cpu_dev`): `blockMesh` + `checkMesh` + a short stability
   run — mesh generation and sanity now.
-- **production** (`sequana_cpu_long`): full wash-out + averaging — **prepared
+- **production** (`sequana_cpu`): full wash-out + averaging — **prepared
   only; never submitted before explicit authorization**.
 
 Nothing is launched on the long queue in S1.

@@ -127,5 +127,5 @@ stages:
     executes: true
   production:
     description: full wash-out + averaging (long queue; prepared only)
-    queue: sequana_cpu_long
+    queue: sequana_cpu
     executes: false

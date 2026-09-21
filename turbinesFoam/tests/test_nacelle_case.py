@@ -289,7 +289,7 @@ def test_stage_plan(cfg):
     executing = [name for name, stage in stages.items() if stage.get("executes")]
     assert executing == ["stage0"]
     assert stages["stage0"]["queue"] == "sequana_cpu_dev"
-    assert stages["production"]["queue"] == "sequana_cpu_long"
+    assert stages["production"]["queue"] == "sequana_cpu"
     assert stages["production"]["executes"] is False
 
 

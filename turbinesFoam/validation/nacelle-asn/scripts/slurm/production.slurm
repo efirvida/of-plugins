@@ -15,7 +15,7 @@
 # After the array finishes, compare each grid with:
 #   python3 scripts/compareNacelle.py --run-dir runs/nacelle-coarse --mesh coarse
 #   python3 scripts/compareNacelle.py --run-dir runs/nacelle-medium --mesh medium
-#SBATCH -p sequana_cpu_long
+#SBATCH -p sequana_cpu
 #SBATCH --ntasks=48
 #SBATCH --nodes=1
 #SBATCH -J nacelle-prod
