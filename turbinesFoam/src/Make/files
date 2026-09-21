@@ -14,5 +14,6 @@ fvOptions/actuatorLineSource/actuatorLineElement/dynamicStallModels/LeishmanBedd
 fvOptions/actuatorLineSource/actuatorLineElement/profileData/profileData.C
 fvOptions/nacelleSurface/nacelleSurfaceSampler.C
 fvOptions/nacelleSurface/nacelleSurfaceSource.C
+fvOptions/nacelleSurface/surfaceSamplerBase.C
 
 LIB = $(FOAM_USER_LIBBIN)/libturbinesFoam

@@ -155,57 +155,15 @@ void Foam::fv::nacelleSurfaceSource::calcForceField
         forceTangential_ += rhoNode*fTau*A[i];
     }
 
-    // Eq. 18: distribute the per-node forces onto the local cells
-    distributeForce(forceField_, nodeH);
-}
-
-
-void Foam::fv::nacelleSurfaceSource::distributeForce
-(
-    volVectorField& ff,
-    const List<scalar>& nodeH
-)
-{
-    forAll(sampler_.nodeForces_, i)
-    {
-        const point& X = sampler_.positions_[i];
-        const vector F = sampler_.nodeForces_[i];
-        const scalar h = nodeH[i];
-        const scalar radius = 2.5*h;
-
-        // Every rank holds the full (replicated) node list and loops over its
-        // local cells only, so each receiving cell is written exactly once by
-        // its owner and every node contributes to every cell in its stencil
-        forAll(mesh_.cells(), cellI)
-        {
-            const vector d = mesh_.C()[cellI] - X;
-
-            // Bounding-box prefilter on the kernel support
-            if
-            (
-                mag(d.x()) > radius
-             || mag(d.y()) > radius
-             || mag(d.z()) > radius
-            )
-            {
-                continue;
-            }
-
-            const scalar w
-            (
-                nacelleSurfaceSampler::kernel(d.x()/h)
-              * nacelleSurfaceSampler::kernel(d.y()/h)
-              * nacelleSurfaceSampler::kernel(d.z()/h)
-            );
-
-            if (w > 0.0)
-            {
-                // Eq. 18 with the paper's negative sign: the distributed
-                // force acts on the flow, F_i acts on the body
-                ff[cellI] -= F*(w/mesh_.V()[cellI]);
-            }
-        }
-    }
+    // Eq. 18: distribute the per-node forces onto the local cells. The
+    // nacelle keeps the delivered exhaustive loop (nullptr candidate list)
+    sampler_.distributeForce
+    (
+        forceField_,
+        sampler_.nodeForces_,
+        nodeH,
+        nullptr
+    );
 }
 
 

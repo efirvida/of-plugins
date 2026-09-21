@@ -151,13 +151,6 @@ protected:
             const volScalarField* rhoPtr = nullptr
         );
 
-        //- Distribute the per-node forces onto the local cells (Eq. 18)
-        void distributeForce
-        (
-            volVectorField& ff,
-            const List<scalar>& nodeH
-        );
-
         //- Add the force field to the momentum equation
         void addToEquation(fvMatrix<vector>& eqn);
 

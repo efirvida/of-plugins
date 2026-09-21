@@ -25,17 +25,57 @@ License
 
 // * * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * //
 
-inline const Foam::List<Foam::vector>&
-Foam::fv::nacelleSurfaceSampler::forces() const
+inline Foam::label Foam::fv::surfaceSamplerBase::nNodes() const
 {
-    return forces_;
+    return positions_.size();
 }
 
 
-inline Foam::scalar
-Foam::fv::nacelleSurfaceSampler::referenceVelocity() const
+inline const Foam::List<Foam::point>&
+Foam::fv::surfaceSamplerBase::positions() const
 {
-    return referenceVelocity_;
+    return positionsBody_;
+}
+
+
+inline const Foam::List<Foam::vector>&
+Foam::fv::surfaceSamplerBase::normals() const
+{
+    return normalsBody_;
+}
+
+
+inline const Foam::List<Foam::scalar>&
+Foam::fv::surfaceSamplerBase::areas() const
+{
+    return areas_;
+}
+
+
+inline const Foam::List<Foam::point>&
+Foam::fv::surfaceSamplerBase::positionsGlobal() const
+{
+    return positions_;
+}
+
+
+inline const Foam::List<Foam::vector>&
+Foam::fv::surfaceSamplerBase::normalsGlobal() const
+{
+    return normals_;
+}
+
+
+inline const Foam::tensor&
+Foam::fv::surfaceSamplerBase::bodyToGlobal() const
+{
+    return bodyToGlobal_;
+}
+
+
+inline Foam::scalar Foam::fv::surfaceSamplerBase::rhoRef() const
+{
+    return rhoRef_;
 }
 
 
