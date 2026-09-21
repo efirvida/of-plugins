@@ -1,0 +1,63 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Standalone actuatorLineSource (no turbine, no surface): one cylinder
+// element whose chord line lies in the two-triangle plate of
+// `geometry/plate.stl`, in a uniform 0.1 m cubic mesh with a uniform inflow.
+// The element default (projectElementForce true) projects the strip force, so
+// this is the ALM/no-mesh default-path fixture.
+
+blade
+{
+    type            actuatorLineSource;
+    active          true;
+
+    actuatorLineSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             bladeCells;
+
+        freeStreamVelocity  (1 0 0);
+        nElements           1;
+        writePerf           true;
+        writeElementPerf    true;
+        endEffects          false;
+
+        elementGeometry // (point spanDir chordLength chordRefDir chordMount pitch)
+        (
+            ((0.5 0.5 0.4) (0 0 1) (0.2) (0 1 0) (0.5) (0))
+            ((0.5 0.5 0.6) (0 0 1) (0.2) (0 1 0) (0.5) (0))
+        );
+
+        elementProfiles (cylinder);
+
+        profileData
+        {
+            cylinder
+            {
+                // Constant drag coefficient: the element force is analytic
+                data
+                (
+                    (-180 0 1.1)
+                    (180 0 1.1)
+                );
+            }
+        }
+    }
+}
+
+// ************************************************************************* //

@@ -1,0 +1,5 @@
+// Blade element data: two geometry rows make one segment, so `nElements 1`
+// creates the single element at radius 0.35 m (chord 0.1 m, span 0.1 m).
+// axialDistance, radius, azimuth, chord, chordMount, twist
+(0.0    0.30    0.0     0.1         0.25    0.0)
+(0.0    0.40    0.0     0.1         0.25    0.0)

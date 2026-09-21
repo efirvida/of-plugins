@@ -1,0 +1,78 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+convertToMeters 1;
+
+vertices
+(
+    (-0.8 -0.8 -0.8) // 0
+    ( 1.8 -0.8 -0.8) // 1
+    ( 1.8  1.8 -0.8) // 2
+    (-0.8  1.8 -0.8) // 3
+    (-0.8 -0.8  1.8) // 4
+    ( 1.8 -0.8  1.8) // 5
+    ( 1.8  1.8  1.8) // 6
+    (-0.8  1.8  1.8) // 7
+);
+
+blocks
+(
+    // 26 x 26 x 26 uniform cells of 0.1 m (cubic): h = cbrt(V) = 0.1. The
+    // domain is deliberately larger than the plate's kernel supports so that
+    // the cosine (2.5 h), the Gaussian (2 h meshFactor sqrt(ln 1000)) and the
+    // delivered element strip projection (chord + epsilon sqrt(ln 1000),
+    // epsilon = 2 h meshFactor) stencils all fit inside the mesh and the
+    // projected totals are not clipped at a boundary.
+    hex (0 1 2 3 4 5 6 7) (26 26 26) simpleGrading (1 1 1)
+);
+
+edges
+();
+
+boundary
+(
+    inlet
+    {
+        type patch;
+        faces
+        (
+            (0 4 7 3)
+        );
+    }
+
+    outlet
+    {
+        type patch;
+        faces
+        (
+            (1 2 6 5)
+        );
+    }
+
+    walls
+    {
+        type wall;
+        faces
+        (
+            (0 1 5 4)
+            (3 7 6 2)
+            (0 3 2 1)
+            (4 5 6 7)
+        );
+    }
+);
+
+// ************************************************************************* //

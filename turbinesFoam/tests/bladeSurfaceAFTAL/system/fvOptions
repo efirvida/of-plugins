@@ -1,0 +1,87 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|  \\    /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Minimal rotor: one blade, one cylinder element, no hub and no tower. The
+// blade carries `surfaceGeometry`, so the turbine injects the construction
+// frame (surfaceOrigin, surfaceSpanDirection, surfaceChordDirection) and the
+// blade source injects `projectElementForce false`; the distributor replaces
+// the element strip projection with the imported-plate distribution and its
+// node moment replaces the element moment in the reported torque (D8).
+
+turbine
+{
+    type            axialFlowTurbineALSource;
+    active          on;
+
+    axialFlowTurbineALSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             turbine;
+        origin              (0 0 0);
+        axis                (1 0 0);
+        verticalDirection   (0 0 1);
+        freeStreamVelocity  (10 0 0);
+        tipSpeedRatio       6.0;
+        rotorRadius         0.45;
+
+        dynamicStall
+        {
+            active          off;
+            dynamicStallModel LeishmanBeddoes;
+        }
+
+        endEffects
+        {
+            active          off;
+            endEffectsModel Glauert;
+        }
+
+        blades
+        {
+            blade1
+            {
+                writePerf           true;
+                writeElementPerf    true;
+                nElements           1;
+                elementProfiles     (cylinder);
+                elementData
+                (
+                    #include "elementData"
+                );
+
+                // Blade surface distributor: the injected frame places the
+                // canonical plate (span +z, chord +y) on the element chord
+                // line; rho 1.0 keeps the per-node CSV forces equal to the
+                // per-unit-density node shares used by the reported moment
+                surfaceGeometry     "geometry/plate.stl";
+                kernel              cosine;
+                rho                 1.0;
+                writeNodePerf       true;
+            }
+        }
+
+        profileData
+        {
+            cylinder
+            {
+                data ((-180 0 1.1)(180 0 1.1));
+            }
+        }
+    }
+}
+
+// ************************************************************************* //

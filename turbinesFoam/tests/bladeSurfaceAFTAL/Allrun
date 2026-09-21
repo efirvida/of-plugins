@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Minimal axialFlowTurbineALSource case with a blade surface: one blade, one
+# element, no hub/tower. The args are:
+#   $1: `-parallel` or nothing
+#
+# The surface frame is injected by the turbine source (surfaceOrigin,
+# surfaceSpanDirection, surfaceChordDirection) because `surfaceGeometry` is
+# present in the blade subdictionary; no user construction-frame keys exist.
+
+cd ${0%/*} || exit 1    # run from this directory
+
+# Source tutorial run functions
+. $WM_PROJECT_DIR/bin/tools/RunFunctions
+
+# Copy initial conditions
+cp -rf 0.org 0
+
+runApplication blockMesh
+runApplication topoSet
+
+if [ "$1" = "-parallel" ]
+then
+    runApplication decomposePar
+    runParallel pimpleFoam
+else
+    runApplication pimpleFoam
+fi
+
+# ----------------------------------------------------------------- end-of-file

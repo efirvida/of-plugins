@@ -19,6 +19,7 @@ SOLVER_DRIVEN = (
     "test_aftal_asm.py",
     "test_al.py",
     "test_asm.py",
+    "test_blade_surface.py",
     "test_cftal.py",
     "test_libs.py",
     "test_nacelle.py",

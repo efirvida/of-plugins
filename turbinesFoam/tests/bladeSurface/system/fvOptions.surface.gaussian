@@ -1,0 +1,72 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Gaussian ablation variant of system/fvOptions.surface: the width is the
+// no-mesh ASM epsilon eps = 2 cbrt(V) meshFactor (D7), here with meshFactor
+// 1.0 and the same two-node plate. The domain is sized so the truncated
+// support (eps sqrt(ln 1000)) is not clipped at a boundary.
+
+blade
+{
+    type            actuatorLineSource;
+    active          true;
+
+    actuatorLineSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             bladeCells;
+
+        freeStreamVelocity  (1 0 0);
+        nElements           1;
+        writePerf           true;
+        writeElementPerf    true;
+        endEffects          false;
+
+        elementGeometry // (point spanDir chordLength chordRefDir chordMount pitch)
+        (
+            ((0.5 0.5 0.4) (0 0 1) (0.2) (0 1 0) (0.5) (0))
+            ((0.5 0.5 0.6) (0 0 1) (0.2) (0 1 0) (0.5) (0))
+        );
+
+        elementProfiles (cylinder);
+
+        // Blade surface distributor (D1-D9), Gaussian ablation (D7)
+        surfaceGeometry     "geometry/plate.stl";
+        surfaceOrigin       (0 0 0);
+        surfaceSpanDirection (0 0 1);
+        surfaceChordDirection (0 1 0);
+        kernel              gaussian;
+        meshFactor          1.0;
+        rho                 1.0;
+        writeNodePerf       true;
+
+        profileData
+        {
+            cylinder
+            {
+                // Constant drag coefficient: the element force is analytic
+                data
+                (
+                    (-180 0 1.1)
+                    (180 0 1.1)
+                );
+            }
+        }
+    }
+}
+
+// ************************************************************************* //

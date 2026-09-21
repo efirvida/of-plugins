@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Standalone bladeSurfaceSource case. The args are:
+#   $1: fvOptions variant to install: -surface | -gaussian (default: none)
+#   $2: `-parallel` or nothing
+#
+# The variant is copied over system/fvOptions inside the run directory; the
+# test suite always runs on a throwaway copy of the case, so the committed
+# system/fvOptions (the no-surface default) is never modified.
+
+cd ${0%/*} || exit 1    # run from this directory
+
+# Source tutorial run functions
+. $WM_PROJECT_DIR/bin/tools/RunFunctions
+
+case "$1" in
+    -surface)
+        cp system/fvOptions.surface system/fvOptions
+        shift
+        ;;
+    -gaussian)
+        cp system/fvOptions.surface.gaussian system/fvOptions
+        shift
+        ;;
+esac
+
+# Copy initial conditions
+cp -rf 0.org 0
+
+runApplication blockMesh
+runApplication topoSet
+
+if [ "$1" = "-parallel" ]
+then
+    runApplication decomposePar
+    runParallel pimpleFoam
+else
+    runApplication pimpleFoam
+fi
+
+# ----------------------------------------------------------------- end-of-file

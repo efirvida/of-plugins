@@ -1,0 +1,70 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\  /    M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+application     pimpleFoam;
+
+startFrom       startTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+// Two steps: the first element CSV row of a surface run must equal the
+// default run's first row (both see the uniform initial field); the later
+// row is free to differ because the surface changes the inflow
+endTime         0.2;
+
+deltaT          0.1;
+
+writeControl    timeStep;
+
+writeInterval   1;
+
+purgeWrite      0;
+
+writeFormat     ascii;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   6;
+
+runTimeModifiable true;
+
+libs
+(
+    "libturbinesFoam.so"
+);
+
+functions
+{
+    // Volume-integrate the distributed blade force field, so the
+    // total-force preservation property (sum of cell force * V equals the
+    // sum of the node forces, by the kernel partition of unity) can be
+    // asserted by the integration test. The distributed field is the force
+    // on the flow, i.e. minus the force on the blade reported in the CSV.
+    forceIntegral
+    {
+        type            volFieldValue;
+        libs            ("libfieldFunctionObjects.so");
+        fields          (force.blade);
+        operation       volIntegrate;
+        writeFields     false;
+    }
+}
+
+// ************************************************************************* //
