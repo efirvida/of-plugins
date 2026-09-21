@@ -186,6 +186,12 @@ protected:
         //- Switch for writing performance
         bool writePerf_;
 
+        //- Switch for projecting the element force into the momentum field.
+        //  False suppresses only the strip projection (applyForceField);
+        //  calculateForce, writePerf and the public force() stay active. The
+        //  blade source injects false when a blade surface is configured.
+        bool projectElementForce_;
+
         //- Output file stream
         OFstream* outputFile_;
 
@@ -301,6 +307,12 @@ public:
 
             //- Return the element chord length
             const scalar& chordLength() const;
+
+            //- Return the element chord direction (trailing to leading edge)
+            const vector& chordDirection() const;
+
+            //- Return the element span direction (the element pitch axis)
+            const vector& spanDirection() const;
 
             //- Return the element span length
             const scalar& spanLength();

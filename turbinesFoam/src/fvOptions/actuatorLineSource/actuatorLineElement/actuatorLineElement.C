@@ -140,6 +140,12 @@ void Foam::fv::actuatorLineElement::read()
     // Read writePerf switch
     dict_.lookup("writePerf") >> writePerf_;
 
+    // Read projectElementForce switch: false suppresses only the strip
+    // projection into the field (injected by the blade source when a blade
+    // surface is configured); the force calculation and CSV stay active
+    projectElementForce_ =
+        dict_.lookupOrDefault("projectElementForce", true);
+
     if (debug)
     {
         Info<< "actuatorLineElement properties:" << endl;
@@ -576,6 +582,7 @@ Foam::fv::actuatorLineElement::actuatorLineElement
     velocityLE_(vector::zero),
     velocityTE_(vector::zero),
     writePerf_(false),
+    projectElementForce_(true),
     rootDistance_(0.0),
     endEffectFactor_(1.0),
     addedMassActive_(dict.lookupOrDefault("addedMass", false)),
@@ -606,6 +613,18 @@ const Foam::word& Foam::fv::actuatorLineElement::name() const
 const Foam::scalar& Foam::fv::actuatorLineElement::chordLength() const
 {
     return chordLength_;
+}
+
+
+const Foam::vector& Foam::fv::actuatorLineElement::chordDirection() const
+{
+    return chordDirection_;
+}
+
+
+const Foam::vector& Foam::fv::actuatorLineElement::spanDirection() const
+{
+    return spanDirection_;
 }
 
 
@@ -1072,7 +1091,13 @@ void Foam::fv::actuatorLineElement::addSup
 
     const volVectorField& Uin(eqn.psi());
     calculateForce(Uin);
-    applyForceField(forceFieldI);
+
+    // Strip projection is suppressed when a blade surface distributes the
+    // force instead (adds zero to forceField, keeping force()/CSV active)
+    if (projectElementForce_)
+    {
+        applyForceField(forceFieldI);
+    }
 
     // Add force to total actuator line force
     forceField += forceFieldI;
@@ -1111,7 +1136,13 @@ void Foam::fv::actuatorLineElement::addSup
 
     const volVectorField& Uin(eqn.psi());
     calculateForce(Uin);
-    applyForceField(forceFieldI);
+
+    // Strip projection is suppressed when a blade surface distributes the
+    // force instead (adds zero to forceField, keeping force()/CSV active)
+    if (projectElementForce_)
+    {
+        applyForceField(forceFieldI);
+    }
 
     // Multiply force vector by local density
     multiplyForceRho(rho);
