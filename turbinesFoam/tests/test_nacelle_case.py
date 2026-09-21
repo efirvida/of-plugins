@@ -165,7 +165,11 @@ def test_sampling_function_object(cfg):
         text = generate_case.render_control_dict(cfg, mesh)
         assert "type            probes;" in text
         assert "libs            (sampling);" in text
-        assert "name            profiles;" in text
+        # OpenFOAM's `probes` writes to postProcessing/<function-object name>/,
+        # so the dictionary key is the contract with compareNacelle.py; a `name`
+        # entry is ignored by the function object and must not come back.
+        assert re.search(r"^\s{4}profiles\s*$", text, re.MULTILINE)
+        assert not re.search(r"^\s{4}name\s", text, re.MULTILINE)
         assert "fields          (U);" in text
         assert "writeControl    timeStep;" in text
         assert "probeLocations" in text

@@ -45,13 +45,15 @@ asserts those Δ values.
 
 ## Profile sampling and stations
 
-The rendered case adds a `probes` function object (`profileSamples`) that writes
+The rendered case adds a `probes` function object named `profiles` that writes
 the velocity time series on a vertical line through the wake at every metric
 station (`1R, 3R, 5R, 7R` plus the `10R` stretch), at cell centres nearest the
 declared line (at most half a cell away; the offset is recorded in
-`metrics.json`). `scripts/compareNacelle.py` consumes that series to form the
-time-averaged `⟨u⟩(z)` and the **resolved** TKE `k(z) = 1/2 ⟨u'_i u'_i⟩` over the
-configured window `[2 T_ft, 7 T_ft]`.
+`metrics.json`). Its output directory is the function-object name
+(`postProcessing/profiles/<startTime>/U`) — OpenFOAM ignores a `name` entry —
+which is the path `scripts/compareNacelle.py` reads. The tool consumes that
+series to form the time-averaged `⟨u⟩(z)` and the **resolved** TKE
+`k(z) = 1/2 ⟨u'_i u'_i⟩` over the configured window `[2 T_ft, 7 T_ft]`.
 
 Station reconciliation (`10R`): the paper's panels are at **odd** multiples of
 `R` (1R..19R) — there is no `10R` panel. A declared station with an exact panel

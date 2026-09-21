@@ -42,13 +42,15 @@ functions
     // consumed by `scripts/compareNacelle.py` for the time-averaged <u>(z) and
     // the resolved TKE k(z) = 1/2 <u'_i u'_i>. Probed every time step: the
     // resolved TKE needs the full 0.1 s series, not the field-write cadence.
-    profileSamples
+    // The dictionary name IS the output directory: OpenFOAM's `probes` writes
+    // to postProcessing/<name>/<startTime>/U and ignores a `name` entry, so
+    // this key must stay in sync with compareNacelle.py's PROBE_GLOB.
+    profiles
     {
         // Where to load it from
         libs            (sampling);
 
         type            probes;
-        name            profiles;
 
         writeControl    timeStep;
         writeInterval   1;

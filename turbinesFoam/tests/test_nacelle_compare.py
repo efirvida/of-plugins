@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -169,6 +170,29 @@ def test_reference_panels_and_station_mapping():
     assert mapping[10.0]["mapping"] == "bracket"
     assert mapping[10.0]["panels_R"] == [9.0, 11.0]
     assert mapping[10.0]["offsets_R"] == [-1.0, 1.0]
+
+
+def test_probe_glob_matches_the_rendered_function_object():
+    """The compare tool must read the directory the case actually writes.
+
+    OpenFOAM's `probes` function object writes to
+    `postProcessing/<function-object name>/<startTime>/U`; it never reads a
+    `name` entry (v2506 `sampling/probes/probes.C` builds the directory from
+    `name()`). The committed controlDict is therefore the contract, and this
+    test fails if the glob and the dictionary key ever drift apart.
+    """
+    probe_dir = compare.PROBE_GLOB.split("/")[1]
+    control = (PACKAGE / "case" / "system" / "controlDict").read_text(
+        encoding="utf-8"
+    )
+    assert re.search(rf"^\s{{4}}{probe_dir}\s*$", control, re.MULTILINE), (
+        f"PROBE_GLOB expects {probe_dir}/ but the rendered controlDict has no "
+        f"{probe_dir} function object"
+    )
+    assert not re.search(r"^\s{4}name\s", control, re.MULTILINE), (
+        "the probes function object ignores a `name` entry; the dictionary "
+        "key is the output directory"
+    )
 
 
 def test_profile_interpolation_clamps_at_the_ends():
