@@ -727,3 +727,61 @@ the file ended without a trailing newline.
    containers for MPI serialization and copied data back to `std::vector`.
 3. Added trailing newline in `Utilities.C` to silence `wmkdepend` parse
    warnings.
+
+---
+
+#### 13. Add nacelle/hub actuator surface model, geometry pipeline and validation package
+
+**Files:**
+- `turbinesFoam/src/fvOptions/nacelleSurface/nacelleSurfaceSampler.{H,C,I.H}` (new)
+- `turbinesFoam/src/fvOptions/nacelleSurface/nacelleSurfaceSource.{H,C,I.H}` (new)
+- `turbinesFoam/src/fvOptions/axialFlowTurbineALSource/axialFlowTurbineALSource.{H,C}` (updated)
+- `turbinesFoam/src/fvOptions/turbineALSource/turbineALSource.{H,C}` (updated)
+- `turbinesFoam/src/Make/files`, `turbinesFoam/src/Make/options` (updated)
+- `turbinesFoam/geometry/` (new: `src/nacelle.geo`, `src/makeGeometry.py`,
+  `stl/nacelle.stl`, `metadata/nacelle.json`, `README.md`, `PROVENANCE.md`)
+- `turbinesFoam/validation/nacelle-asn/` (new: `config/case.yaml`,
+  `tools/generate_case.py`, `case/`, `data/reference/`,
+  `scripts/compareNacelle.py`, `scripts/runNacelle.sh`,
+  `scripts/slurm/{stage0,production}.slurm`, `README.md`)
+- `turbinesFoam/tests/{test_nacelle.py,test_nacelle_data.py,test_nacelle_case.py,test_nacelle_compare.py}` (new)
+- `turbinesFoam/README.md`, `README.md` (updated)
+
+**Problem:** `axialFlowTurbineALSource` declared a `nacelle {}` subdict and a
+`nacelle_` `autoPtr` but `createNacelle()` was an empty stub, so any case with a
+`nacelle {}` block dereferenced null in every `addSup` overload. There was no
+nacelle force model, no deterministic geometry pipeline, and the rotor azimuth
+was an incremental accumulator that silently reset on `startFrom latestTime`
+restarts — an idempotency gap that blocks FSI.
+
+**Fix:**
+1. New `nacelleSurfaceSource` (a `cellSetOption` `fv::option`) owning the
+   reusable `nacelleSurfaceSampler`: `triSurface` read, per-triangle centroid
+   positions/normals/areas, the direct-forcing normal traction (Eq. 19), the
+   Schultz–Grunow friction model with a constant `cf` override (Eqs. 21–23),
+   the smoothed 4-point cosine kernel (Eqs. 7/8/18) for both interpolation and
+   force distribution, MPI replicated-node/local-cell handling and CSV output.
+   The path is additive: with no `nacelle {}` the ALM default is byte-identical.
+   The source is usable standalone (the rotor-less validation case) or composed
+   through the implemented `createNacelle()`, which closes the null-dereference.
+2. Deterministic geometry pipeline: gmsh `.geo` + `makeGeometry.py` produce the
+   committed binary nacelle STL (2616 triangles, paper target ~2652) plus
+   metadata and provenance, with a non-destructive `--check` that verifies
+   byte-identical regeneration in both the plain and OpenFOAM environments.
+3. Time-derived, restart-safe kinematics: `angleDeg_` is an integral of the
+   omega law (closed form for the `tsrAmplitude` oscillation) persisted as the
+   `angleDeg.<name>` registry field, with an optional `omega.<name>` override
+   for the future preCICE seam; the constant-TSR `angle_deg` CSV column is
+   byte-identical to the accumulator.
+4. Validation package `turbinesFoam/validation/nacelle-asn/`: the paper's
+   periodic-nacelle benchmark (Re = 1000, 30R x 20R x 20R, cyclic/free-slip,
+   WALE headline with a URANS k-omega SST fallback), coarse/medium grids
+   rendered from a YAML single source of truth, metric-station profile probes,
+   digitized wall-resolved-LES reference profiles with provenance, a compare
+   tool (`⟨u⟩(z)`, resolved `k(z)`, `CD = |F_drag|/(0.5 ρ U∞² πR²)`; per-station
+   and per-grid acceptance with the permeable-disk `CD = 0.48` kept as a datum)
+   and staged Slurm jobs (stage0 dev-partition execution; production prepared
+   only, never launched before authorization).
+
+Reference: Yang, X. and Sotiropoulos, F., *A new class of actuator surface
+models for wind turbines*, arXiv:1702.02108v4 (2018), Sec. 2.2 and 4.1.

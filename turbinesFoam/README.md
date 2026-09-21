@@ -209,6 +209,35 @@ compressible overload weights it by the local density.
   turbinesFoam. The nacelle is static — `rotate`, `tilt` and `yaw` move the
   blades and hub only.
 
+### Validation
+
+The fork adds a paper-faithful validation package for the nacelle model at
+`validation/nacelle-asn/` (Yang & Sotiropoulos, arXiv:1702.02108v4, Sec. 4.1):
+a rotor-less hemisphere + cylinder nacelle at Re = 1000 in a streamwise-periodic
+30R x 20R x 20R cell, represented only by `nacelleSurfaceSource`.
+
+- `config/case.yaml` is the single source of truth; `tools/generate_case.py`
+  renders the committed `case/` skeleton (non-destructive `--check`) for the
+  paper's coarse (153x80x80) and medium (115x151x151) grids, and the case
+  probes the metric-station lines every time step for the profile series.
+- Digitized wall-resolved-LES reference profiles (Fig. 5/Fig. 6, panels
+  1R..19R) live in `data/reference/` with `PROVENANCE.md`;
+  `scripts/compareNacelle.py` forms `⟨u⟩(z)`, the resolved `k(z)` and
+  `CD = |F_drag| / (0.5 ρ U∞² πR²)` and enforces the per-station/per-grid
+  acceptance. The paper's permeable-disk `CD = 0.48` is a datum, not a target.
+- **Geometry:** `geometry/` is the shared deterministic gmsh + Python pipeline
+  (`makeGeometry.py --check`) that produces the nacelle STL consumed by the
+  case; blade STLs are reserved for a later change (the layout and metadata
+  schema accommodate them).
+- Staged Slurm: `scripts/slurm/stage0.slurm` (development partition: mesh +
+  short stability run) is the only authorized execution; `production.slurm`
+  (long queue: full wash-out + averaging) is **prepared only** and refuses to
+  run without an explicit authorization.
+- Closure adaptation: the paper's dynamic SGS model is not in standard
+  OpenFOAM, so the headline is LES **WALE** with a documented URANS k-ω SST
+  fallback; the nacelle has no body-fitted mesh, so near-wall quantities are
+  not claimed.
+
 ## Publications
 
 Bachant, P., Goude, A., and Wosnik, M. (2016) [_Actuator line modeling of vertical-axis turbines_](https://arxiv.org/abs/1605.01449). arXiv preprint 1605.01449.

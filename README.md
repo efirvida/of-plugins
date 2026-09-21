@@ -55,6 +55,15 @@ No submodules are used. All code is self-contained and built with `wmake`.
     with chord-averaged inflow and mesh-based projection width; ALM remains
     the byte-identical default. HAWT tutorial at
     `tutorials/axialFlowTurbineASM/` with an ALM-vs-ASM comparison script.
+  - **Fork extension:** nacelle/hub **actuator surface model**
+    (`type nacelleSurfaceSource;`), usable standalone or composed through
+    `axialFlowTurbineALSource`'s `nacelle {}` subdict; the reusable
+    `nacelleSurfaceSampler` exposes the `positions()`/`forces()` sampling
+    contract for future FSI coupling. Rotor kinematics are time-derived and
+    restart-safe (`angleDeg.<name>` / `omega.<name>` registry fields).
+  - **Fork extension:** deterministic `geometry/` pipeline (gmsh +
+    `makeGeometry.py --check`) and the `validation/nacelle-asn/` periodic-nacelle
+    benchmark against Yang & Sotiropoulos (arXiv:1702.02108v4).
   - See [turbinesFoam/README.md](turbinesFoam/README.md) for original documentation.
 
 ## NREL Phase VI validation (`turbinesFoam/validation/phaseVI/`)
@@ -76,6 +85,42 @@ experimental anchors and per-directory data provenance.
   be submitted** until the long-queue authorization is granted.
 - See [turbinesFoam/validation/phaseVI/README.md](turbinesFoam/validation/phaseVI/README.md)
   for setup, metric definitions, tolerance bands and the modelling
+  limitations.
+
+## Nacelle actuator-surface validation (`turbinesFoam/validation/nacelle-asn/`)
+
+Periodic-nacelle benchmark for the fork's nacelle/hub actuator surface model
+(Yang & Sotiropoulos, *A new class of actuator surface models for wind
+turbines*, [arXiv:1702.02108v4](https://arxiv.org/abs/1702.02108v4), Sec. 4.1).
+A rotor-less hemisphere + cylinder nacelle at Re = 1000 in a
+30R x 20R x 20R streamwise-periodic cell, represented **only** by the
+`nacelleSurfaceSource` (no body-fitted mesh): the source distributes the surface
+force onto the background grid.
+
+- `config/case.yaml` is the single source of truth; `tools/generate_case.py`
+  renders and non-destructively checks the committed `case/` skeleton for the
+  paper's coarse (153x80x80) and medium (115x151x151) grids. The case probes the
+  metric-station lines every time step.
+- `scripts/compareNacelle.py` compares a run with the digitized
+  wall-resolved-LES profiles (`data/reference/`, with `PROVENANCE.md`): the
+  time-averaged `⟨u⟩(z)`, the resolved TKE `k(z)` and
+  `CD = |F_drag| / (0.5 ρ U∞² πR²)` at `1R/3R/5R/7R` plus the `10R` stretch
+  (bracketed by the `9R`/`11R` panels — the paper has no `10R` panel). The
+  paper's permeable-disk `CD = 0.48` is a datum, not a target.
+- Acceptance is per station and per grid: medium agrees at all stations, coarse
+  only at `1R` and the far wake. `scripts/runNacelle.sh` enforces the queue
+  gates; `scripts/slurm/stage0.slurm` (dev partition) is the only authorized
+  execution and `production.slurm` (long queue) is **prepared only**.
+- **Closure adaptation:** the paper's dynamic SGS model is not available in
+  standard OpenFOAM, so the headline closure is LES **WALE** (documented) with a
+  URANS k-ω SST smoke fallback. The nacelle is represented only by the actuator
+  surface: no resolved boundary layer, and only wake profiles and integral drag
+  are claimed.
+- **Fork divergence:** new source class (`nacelleSurfaceSource` /
+  `nacelleSurfaceSampler`), the new `geometry/` tree and the
+  `validation/nacelle-asn/` package are not part of upstream turbinesFoam.
+- See [turbinesFoam/validation/nacelle-asn/README.md](turbinesFoam/validation/nacelle-asn/README.md)
+  for setup, the staged run plan, the sampling/station contract and the
   limitations.
 
 ## FSI Motion Model
