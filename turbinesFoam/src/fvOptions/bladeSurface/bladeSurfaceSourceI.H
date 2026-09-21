@@ -38,4 +38,27 @@ inline bool Foam::fv::bladeSurfaceSource::active() const
 }
 
 
+inline void Foam::fv::bladeSurfaceSource::rotate
+(
+    const point& rotationPoint,
+    const vector& axis,
+    const scalar radians
+)
+{
+    sampler_.rotate(rotationPoint, axis, radians);
+}
+
+
+inline void Foam::fv::bladeSurfaceSource::translate(const vector& translation)
+{
+    sampler_.translate(translation);
+}
+
+
+inline void Foam::fv::bladeSurfaceSource::pitch(const scalar radians)
+{
+    sampler_.pitch(radians);
+}
+
+
 // ************************************************************************* //

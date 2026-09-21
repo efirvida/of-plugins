@@ -38,7 +38,9 @@ SourceFiles
 #include "List.H"
 #include "dictionary.H"
 #include "vector.H"
+#include "autoPtr.H"
 #include "actuatorLineElement.H"
+#include "bladeSurfaceSource.H"
 #include "cellSetOption.H"
 #include "volFieldsFwd.H"
 
@@ -92,6 +94,14 @@ protected:
 
         //- List of actuator line elements
         PtrList<actuatorLineElement> elements_;
+
+        //- Surface geometry path; non-empty activates the surface distributor
+        //  and the projectElementForce suppression of every element (D1/D3)
+        fileName surfaceGeometry_;
+
+        //- Per-blade distributor over the imported surface triangulation,
+        //  owned when surfaceGeometry_ is configured (D1)
+        autoPtr<bladeSurfaceSource> surface_;
 
         //- Switch for writing performance
         bool writePerf_;

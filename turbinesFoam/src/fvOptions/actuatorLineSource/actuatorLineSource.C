@@ -69,6 +69,16 @@ bool Foam::fv::actuatorLineSource::read(const dictionary& dict)
         freeStreamDirection_ = freeStreamVelocity_/mag(freeStreamVelocity_);
         endEffectsActive_ = coeffs_.lookupOrDefault("endEffects", false);
 
+        // Surface geometry path; non-empty activates the surface distributor
+        // and the projectElementForce suppression of every element (D1/D3).
+        // The path itself is resolved case-relative by the distributor (the
+        // base sampler convention).
+        surfaceGeometry_ = coeffs_.lookupOrDefault<fileName>
+        (
+            "surfaceGeometry",
+            fileName::null
+        );
+
         // Read harmonic pitching parameters if present
         dictionary pitchDict = coeffs_.subOrEmptyDict("harmonicPitching");
         harmonicPitchingActive_ = pitchDict.lookupOrDefault("active", false);
@@ -193,6 +203,13 @@ void Foam::fv::actuatorLineSource::createElements()
 
     // Compute aspect ratio
     aspectRatio_ = totalLength_/chordLength_;
+
+    // projectElementForce plumbing (D3): a configured surface suppresses the
+    // strip projection of every element; a user blade-subdict value is
+    // forwarded as-is when no surface is configured. Precedence: surface
+    // injection > blade-subdict value > element default true.
+    const bool hasSurfaceGeometry = not surfaceGeometry_.empty();
+    const bool projectElementForceGiven = coeffs_.found("projectElementForce");
 
     // Lookup initial element velocities if present
     List<vector> initialVelocities(nGeometryPoints, vector::zero);
@@ -344,6 +361,21 @@ void Foam::fv::actuatorLineSource::createElements()
             "nChordwise",
             coeffs_.lookupOrDefault<label>("nChordwise", 5)
         );
+
+        // Plumb a user projectElementForce exactly like elementType and
+        // nChordwise; a configured surface overrides it to false so the strip
+        // projection never reaches the field. With neither present the key is
+        // not added and the element default applies (D3).
+        if (hasSurfaceGeometry or projectElementForceGiven)
+        {
+            dict.add
+            (
+                "projectElementForce",
+                hasSurfaceGeometry
+              ? false
+              : coeffs_.lookupOrDefault("projectElementForce", true)
+            );
+        }
 
         if (debug)
         {
@@ -539,6 +571,17 @@ Foam::fv::actuatorLineSource::actuatorLineSource
 {
     read(dict_);
     createElements();
+
+    // Construct the per-blade surface distributor over the imported
+    // triangulation; only a configured surfaceGeometry activates it (D1)
+    if (not surfaceGeometry_.empty())
+    {
+        surface_.reset
+        (
+            new bladeSurfaceSource(name_, coeffs_, mesh_, elements_)
+        );
+    }
+
     if (writePerf_)
     {
         createOutputFile();
@@ -585,6 +628,12 @@ void Foam::fv::actuatorLineSource::rotate
     {
         elements_[i].rotate(rotationPoint, axis, radians, true);
     }
+
+    // Keep the surface nodes in lockstep with the elements (D5)
+    if (surface_.valid())
+    {
+        surface_->rotate(rotationPoint, axis, radians);
+    }
 }
 
 
@@ -593,6 +642,13 @@ void Foam::fv::actuatorLineSource::pitch(scalar radians)
     forAll(elements_, i)
     {
         elements_[i].pitch(radians);
+    }
+
+    // Rigid surface pitch about the root element pitch axis through the root
+    // chord pitch-axis point (documented approximation, D5)
+    if (surface_.valid())
+    {
+        surface_->pitch(radians);
     }
 }
 
@@ -603,6 +659,13 @@ void Foam::fv::actuatorLineSource::pitch(scalar radians, scalar chordFraction)
     {
         elements_[i].pitch(radians, chordFraction);
     }
+
+    // The surface pitches rigidly about the root frame whatever chord
+    // fraction the elements use (documented approximation, D5)
+    if (surface_.valid())
+    {
+        surface_->pitch(radians);
+    }
 }
 
 
@@ -611,6 +674,12 @@ void Foam::fv::actuatorLineSource::translate(vector translationVector)
     forAll(elements_, i)
     {
         elements_[i].translate(translationVector);
+    }
+
+    // Keep the surface nodes in lockstep with the elements (D5)
+    if (surface_.valid())
+    {
+        surface_->translate(translationVector);
     }
 }
 
@@ -667,6 +736,14 @@ PtrList<Foam::fv::actuatorLineElement>& Foam::fv::actuatorLineSource::elements()
 
 Foam::vector Foam::fv::actuatorLineSource::moment(vector point)
 {
+    // With an active surface the node moment is the moment of the load
+    // actually applied to the field; adding the element moment would double
+    // count the same force (D8)
+    if (surface_.valid())
+    {
+        return surface_->moment(point);
+    }
+
     vector moment(vector::zero);
     forAll(elements_, i)
     {
@@ -705,6 +782,13 @@ void Foam::fv::actuatorLineSource::addSup
     {
         elements_[i].addSup(eqn, forceField_);
         force_ += elements_[i].force();
+    }
+
+    // The suppressed elements projected zero force; the surface distributes
+    // the element total over the imported nodes exactly once (D1/D3)
+    if (surface_.valid())
+    {
+        surface_->distribute(forceField_, force_);
     }
 
     Info<< "Force (per unit density) on " << name_ << ": "
@@ -775,6 +859,14 @@ void Foam::fv::actuatorLineSource::addSup
     {
         elements_[i].addSup(rho, eqn, forceField_);
         force_ += elements_[i].force();
+    }
+
+    // The suppressed elements projected zero force; the surface distributes
+    // the element total over the imported nodes exactly once, with the
+    // node-local density (D1/D3)
+    if (surface_.valid())
+    {
+        surface_->distribute(forceField_, force_, &rho);
     }
 
     Info<< "Force on " << name_ << ": " << endl << force_ << endl << endl;

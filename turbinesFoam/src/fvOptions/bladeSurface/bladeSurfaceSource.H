@@ -181,6 +181,25 @@ public:
             );
 
 
+        // Manipulation (rigid transform lockstep with the owning blade, D5)
+
+            //- Rotate the surface about point/axis by radians
+            void rotate
+            (
+                const point& rotationPoint,
+                const vector& axis,
+                const scalar radians
+            );
+
+            //- Translate the surface
+            void translate(const vector& translation);
+
+            //- Pitch the surface rigidly about the root element pitch axis
+            //  through the root chord pitch-axis point (documented
+            //  approximation, D5)
+            void pitch(const scalar radians);
+
+
         // Evaluation
 
             //- Moment of the distributed load about point, per unit density,

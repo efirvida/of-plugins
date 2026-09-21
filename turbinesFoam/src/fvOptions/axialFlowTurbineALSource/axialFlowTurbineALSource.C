@@ -237,6 +237,68 @@ void Foam::fv::axialFlowTurbineALSource::createBlades()
             elementGeometry[j][5][0] = pitch;
         }
 
+        // Surface construction frame (D5): when this blade carries a surface,
+        // inject the post-cone/post-azimuth origin and axes so the surface
+        // sampler places the canonical STL nodes on the element chord lines.
+        // The element pitch axis (elementGeometry[0][1]) is deliberately not
+        // used: in this orientation it points radially inward and would mirror
+        // the surface across the rotor plane.
+        if (bladeSubDict.found("surfaceGeometry"))
+        {
+            vector rootPoint
+            (
+                elementGeometry[0][0][0],
+                elementGeometry[0][0][1],
+                elementGeometry[0][0][2]
+            );
+            vector tipPoint
+            (
+                elementGeometry[nGeomPoints - 1][0][0],
+                elementGeometry[nGeomPoints - 1][0][1],
+                elementGeometry[nGeomPoints - 1][0][2]
+            );
+
+            // Outward root -> tip construction span
+            vector surfaceSpanDirection = tipPoint - rootPoint;
+
+            if (mag(surfaceSpanDirection) < SMALL)
+            {
+                FatalErrorInFunction
+                    << "The blade surface construction span of " << bladeName
+                    << " is degenerate: the root and tip element points "
+                    << "coincide" << nl << exit(FatalError);
+            }
+            surfaceSpanDirection /= mag(surfaceSpanDirection);
+
+            // Reference chord direction (trailing -> leading, before pitch)
+            vector surfaceChordDirection
+            (
+                elementGeometry[0][3][0],
+                elementGeometry[0][3][1],
+                elementGeometry[0][3][2]
+            );
+
+            if (mag(surfaceChordDirection) < SMALL)
+            {
+                FatalErrorInFunction
+                    << "The blade surface construction chord of " << bladeName
+                    << " must be non-zero" << nl << exit(FatalError);
+            }
+            surfaceChordDirection /= mag(surfaceChordDirection);
+
+            bladeSubDict.add("surfaceOrigin", origin_);
+            bladeSubDict.add("surfaceSpanDirection", surfaceSpanDirection);
+            bladeSubDict.add("surfaceChordDirection", surfaceChordDirection);
+
+            if (debug)
+            {
+                Info<< "Surface construction frame for " << bladeName
+                    << ": origin " << origin_
+                    << ", span " << surfaceSpanDirection
+                    << ", chord " << surfaceChordDirection << endl;
+            }
+        }
+
         // Add frontal area to list
         frontalArea = mathematical::pi*magSqr(maxRadius);
         frontalAreas[i] = frontalArea;
