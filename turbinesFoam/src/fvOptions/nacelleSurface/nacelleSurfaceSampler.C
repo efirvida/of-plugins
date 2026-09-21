@@ -443,9 +443,14 @@ Foam::vector Foam::fv::nacelleSurfaceSampler::interpolateVelocity
     }
 
     // Every rank holds the full node list but only its local cells, so the
-    // kernel sums are reduced globally
-    returnReduce(sumW, sumOp<scalar>());
-    returnReduce(sumU, sumOp<vector>());
+    // kernel sums must be reduced globally. returnReduce() returns the
+    // reduced copy and leaves its argument unchanged, so the result has to
+    // be assigned back: a discarded return keeps the rank-local partial
+    // sums, making each rank interpolate from its own subset (a rank with
+    // no cell in the stencil would report a zero velocity) instead of the
+    // paper's Eq. 7 global kernel average.
+    sumW = returnReduce(sumW, sumOp<scalar>());
+    sumU = returnReduce(sumU, sumOp<vector>());
 
     if (sumW < SMALL)
     {

@@ -54,6 +54,26 @@ F_N_TOTAL = RHO * F_N_NODE * AREA_TOTAL
 F_TAU_TOTAL = RHO * F_TAU_NODE * AREA_TOTAL
 CD = F_TOTAL_X / (0.5 * RHO * U_REF**2 * REFERENCE_AREA)
 
+# A copy of the plate translated in x; `{x}` is a streamwise coordinate. Used
+# to place the whole kernel support outside the master rank's half domain.
+PLATE_STL = """solid plate
+  facet normal 1.000000e+00 0.000000e+00 0.000000e+00
+    outer loop
+      vertex {x} 2.500000e-01 2.500000e-01
+      vertex {x} 4.500000e-01 4.500000e-01
+      vertex {x} 2.500000e-01 4.500000e-01
+    endloop
+  endfacet
+  facet normal 1.000000e+00 0.000000e+00 0.000000e+00
+    outer loop
+      vertex {x} 2.500000e-01 2.500000e-01
+      vertex {x} 4.500000e-01 2.500000e-01
+      vertex {x} 4.500000e-01 4.500000e-01
+    endloop
+  endfacet
+endsolid plate
+"""
+
 PERF_CSV = os.path.join("postProcessing", "nacelle", "nacelle.csv")
 NODES_CSV = os.path.join("postProcessing", "nacelle", "nacelle_nodes.csv")
 
@@ -182,6 +202,33 @@ def test_parallel(case):
         assert_allclose(read_force_integral()[0], SERIAL["integral"], rtol=1e-9)
 
 
+def test_parallel_master_without_stencil(tmp_path):
+    """The kernel sums are reduced globally, not left as rank partials.
+
+    The plate is translated to x = 0.85 so the whole kernel support
+    (x in [0.6, 1.1]) lies in the second rank's half of the x = 0.5 split:
+    processor0 holds no cell in the stencil. If the `returnReduce()` results
+    were discarded, the master would interpolate a zero velocity there and
+    report fx = 0; the global reduction reproduces the analytic 0.0402 N on
+    every rank.
+    """
+    case_dir = _copy_case(str(tmp_path / "parallel-global"))
+    geometry = os.path.join(case_dir, "geometry", "plateDownstream.stl")
+    with open(geometry, "w") as stl:
+        stl.write(PLATE_STL.format(x="8.500000e-01"))
+
+    code, log = _run_with_geometry(
+        case_dir, "geometry/plateDownstream.stl", parallel=True
+    )
+    assert code == 0, log[-2000:]
+    assert "Finalising parallel run" in log
+
+    df = pd.read_csv(os.path.join(case_dir, PERF_CSV))
+    last = df.drop_duplicates("time", keep="last").iloc[-1]
+    assert_allclose(last.fx, F_TOTAL_X, rtol=1e-9)
+    assert_allclose([last.fy, last.fz], [0.0, 0.0], atol=1e-12)
+
+
 def _copy_case(dst):
     """Copy the case without generated run artifacts."""
     shutil.copytree(CASE_DIR, dst)
@@ -202,7 +249,7 @@ def _copy_case(dst):
     return dst
 
 
-def _run_with_geometry(case_dir, geometry):
+def _run_with_geometry(case_dir, geometry, parallel=False):
     """Point the source at `geometry`, run the solver and return (code, log)."""
     fv_options = os.path.join(case_dir, "system", "fvOptions")
     text = open(fv_options).read()
@@ -215,11 +262,17 @@ def _run_with_geometry(case_dir, geometry):
         subprocess.check_call(
             cmd, cwd=case_dir, stdout=subprocess.DEVNULL
         )
+    solver = ["pimpleFoam"]
+    if parallel:
+        subprocess.check_call(
+            "decomposePar", cwd=case_dir, stdout=subprocess.DEVNULL
+        )
+        solver = ["mpirun", "-np", "2", "pimpleFoam", "-parallel"]
 
     log_path = os.path.join(case_dir, "log.pimpleFoam")
     with open(log_path, "w") as log:
         proc = subprocess.run(
-            ["pimpleFoam"],
+            solver,
             cwd=case_dir,
             stdout=log,
             stderr=subprocess.STDOUT,
