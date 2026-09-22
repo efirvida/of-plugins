@@ -14,9 +14,10 @@
 > Licence: GPL-3.0 (see `LICENSE`).
 >
 > **Fork divergence:** this copy adds an optional **blade actuator surface
-> model (ASM)** element (see "Actuator surface model" below).  The actuator
-> line model (ALM) is unchanged and remains the default; the ASM is an
-> additive, opt-in extension that does not exist upstream.
+> model (ASM)** element (see "Actuator surface model" below) and an
+> imported-surface **blade surface distributor** (see "Blade surface model"
+> below).  The actuator line model (ALM) is unchanged and remains the default;
+> both additions are opt-in extensions that do not exist upstream.
 
 turbinesFoam is a library for simulating wind and marine hydrokinetic turbines
 in OpenFOAM using the actuator line method.
@@ -237,6 +238,121 @@ a rotor-less hemisphere + cylinder nacelle at Re = 1000 in a streamwise-periodic
   OpenFOAM, so the headline is LES **WALE** with a documented URANS k-ω SST
   fallback; the nacelle has no body-fitted mesh, so near-wall quantities are
   not claimed.
+
+## Blade surface model (imported-surface distributor)
+
+An optional per-blade **blade actuator surface** (`bladeSurfaceSource`) imports
+a triangulated blade surface (STL) and distributes the blade element momentum
+loads over its triangles instead of the element strip projection (Yang &
+Sotiropoulos, arXiv:1702.02108v4, Sec. 2.1). The owning `actuatorLineSource`
+constructs it when the blade subdictionary carries `surfaceGeometry`; it is a
+**distribution-only** model: the BEM chain (coefficient lookup, dynamic stall,
+added mass, end effects, chord-averaged inflow) is unchanged and the surface
+never samples per-node inflow or recomputes BEM loads.
+
+### Configuration
+
+In a blade subdictionary (`blades { blade1 { ... } }`) or a standalone
+`actuatorLineSource`:
+
+```
+surfaceGeometry       "constant/triSurface/phaseVI_blade.stl"; // required; presence activates
+surfaceOrigin         (0 0 0);        // construction frame; injected by AFTAL
+surfaceSpanDirection  (0 0 1);        // outward root -> tip; injected by AFTAL
+surfaceChordDirection (0 -1 0);       // trailing -> leading; injected by AFTAL
+kernel                cosine;         // cosine (default) | gaussian (ablation)
+meshFactor            1.0;            // gaussian only; fallback below
+rho                   1.0;            // reference density for the SI contract/CSV
+referenceVelocity     1.0;            // accepted for shared-template parity; unused
+nu                    -1.0;           // accepted for shared-template parity; unused
+bodyOrigin            (0 0 0);        // optional body-frame override
+bodyAxis              (0 0 1);        // optional body-frame override
+writePerf             true;           // per-station CSV
+writeNodePerf         false;          // opt-in per-node CSV
+```
+
+`surfaceGeometry` accepts an ASCII or binary STL; it is read as given, or
+resolved against the case directory when that is not an existing file (the S1
+resolution). `axialFlowTurbineALSource` injects `surfaceOrigin`,
+`surfaceSpanDirection` (outward root -> tip) and `surfaceChordDirection`
+(trailing -> leading, before element pitch) from the blade construction frame
+after cone/azimuth; a standalone source supplies them itself, and a user
+`bodyOrigin`/`bodyAxis` overrides the body-frame defaults.
+
+**`projectElementForce` (suppression semantics):** when the surface is active,
+the blade source injects `projectElementForce false` into every element dict
+of that blade, so the element strip projection is suppressed and the node
+distribution reaches the momentum equation exactly once. The element still
+computes its force and writes its element CSV and public `force()`; only the
+strip projection into the field is skipped. Without `surfaceGeometry` the key
+is not injected (element default `true`) and the delivered ALM/no-mesh ASM
+behaviour is byte-identical. A user-set `projectElementForce` in the blade
+subdictionary is passed through when no surface is configured.
+
+**Kernel modes:** `kernel cosine` (default) is the paper's smoothed four-point
+cosine kernel with support `2.5*h` (Eq. 8, `h = cbrt(V)` of the node's
+containing cell). `kernel gaussian` selects the ablation that matches the
+no-mesh ASM width: `eps = 2*cbrt(V)*meshFactor` with the truncated support
+`eps*sqrt(ln 1000)` (D7). `meshFactor` is read from the surface subdictionary,
+then from `profileData GaussianCoeffs.meshFactor` in that dictionary or,
+failing that, in the owning elements (where AFTAL copies the blade
+`profileData`), then the element default `2.0`. The Gaussian mode is an
+**ablation** that isolates the
+distribution geometry from the kernel/width confound, not a separate model.
+
+### Output
+
+Written on the master rank under `postProcessing/bladeSurface/`:
+
+- `<owner>.surface.csv` (`writePerf`, default `true`), one row per element
+  (its radial patch):
+  `time,station,root_dist,area,force_x,force_y,force_z,c_ref_n,c_ref_t,f_ref_n,f_ref_t`.
+  `force_*` is the patch force on the blade in newtons (`rho`-scaled);
+  `root_dist` uses the element convention and `c_ref_*`/`f_ref_*` the element
+  definitions, so `comparePhaseVI.py` consumes the file without a new
+  conversion.
+- `<owner>.surface_nodes.csv` (`writeNodePerf`, default `false`):
+  `time,node,x,y,z,nx,ny,nz,fx,fy,fz,area,station,chord_fraction`, per node in
+  the blade body frame with the force on the blade in SI units.
+
+Both files are written with 12 significant digits: the per-node file is the
+audit source of the moment convention below and its reconstruction oracle
+(`rtol 1e-6`) cannot be represented with the default six digits. The element
+and turbine CSVs keep the delivered precision.
+
+**Moment/torque convention (D8):** while the surface is active,
+`actuatorLineSource::moment()` returns the distributed node moment
+`sum_nodes X_i x F_i` (global frame, per unit density) **instead of** the
+element moment, and the axial-flow turbine projects it on the rotor axis for
+the torque, `ct` and `cp`. The reported torque therefore reflects the
+application points of the load actually applied; adding the element moment
+would double count the same force. The per-node CSV is the audit source for
+the reported torque.
+
+### Notes
+
+- **Rotating frame:** `rotate`, `translate` and both `pitch` overloads are
+  forwarded by the blade source, so the nodes stay in lockstep with the
+  elements; `positions()` is the blade body-frame contract (it reflects the
+  azimuth) and the node ordering is fixed at construction. `setSpeed`,
+  `scaleVelocity` and `setOmega` do not move the geometry.
+- **MPI:** every rank holds the full canonical node list and builds candidate
+  lists over its own cells; each local cell is written exactly once and the
+  totals are `returnReduce`d. A node whose containing cell is on another rank
+  is resolved with the S1 `findCell` + reduce/minimum sentinel; an unreachable
+  sample is a fatal error.
+- **Bounded query:** each node needs one `cellSize` lookup and one support
+  query at construction; each `addSup` iterates only the cached candidate
+  list, never every local cell.
+- **Fork divergence:** `bladeSurfaceSource`, `bladeSurfaceSampler` and the
+  shared `surfaceSamplerBase` are new in this fork and are not part of
+  upstream turbinesFoam. The nacelle sampler is re-based on
+  `surfaceSamplerBase` with unchanged (byte-identical) output.
+- **Tests:** `tests/test_blade_surface.py` runs the standalone
+  `tests/bladeSurface` fixture (partition of unity, default path, suppression,
+  CSV schemas, two-rank totals, Gaussian conservation, STL failure paths) and
+  the minimal rotating `tests/bladeSurfaceAFTAL` fixture (rotation lockstep
+  and the D8 surface moment against `turbine.csv`).
 
 ## Publications
 
