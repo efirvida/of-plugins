@@ -64,9 +64,18 @@ turbine
                 );
 
                 // Blade surface distributor: the injected frame places the
-                // canonical plate (span +z, chord +y) on the element chord
-                // line; rho 1.0 keeps the per-node CSV forces equal to the
-                // per-unit-density node shares used by the reported moment
+                // canonical plate (span +z, chord -y) 0.09 m (0.9 chord)
+                // outboard of the element chord line (plate z in [0.39, 0.49]
+                // with the element station at 0.35). The spanwise offset is
+                // deliberate: a purely chordwise offset leaves the rotor-axis
+                // moment unchanged (the section force has no spanwise
+                // component), so only the spanwise offset lets the moment
+                // test tell the D8 surface moment from the element-position
+                // moment (about 20% apart). The offset also keeps the
+                // deterministic six-significant-digit rounding of turbine.csv
+                // inside the surface-moment test's rtol 1e-6 band. rho 1.0
+                // keeps the per-node CSV forces equal to the per-unit-density
+                // node shares used by the reported moment.
                 surfaceGeometry     "geometry/plate.stl";
                 kernel              cosine;
                 rho                 1.0;
