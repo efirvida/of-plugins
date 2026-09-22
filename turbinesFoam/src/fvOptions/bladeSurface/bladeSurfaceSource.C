@@ -51,6 +51,13 @@ void Foam::fv::bladeSurfaceSource::createOutputFiles()
 
     stationFile_ = new OFstream(dir/name_ + ".csv");
 
+    // The per-node CSV is the source of the design's surface-moment
+    // reconstruction oracle (rtol 1e-6, design section 8.1); the default six
+    // significant digits cannot represent it. Per-stream precision, so the
+    // element and turbine CSVs keep the delivered precision (and the ALM /
+    // no-mesh ASM outputs stay byte-identical).
+    stationFile_->precision(12);
+
     *stationFile_
         << "time,station,root_dist,area,force_x,force_y,force_z,"
         << "c_ref_n,c_ref_t,f_ref_n,f_ref_t" << endl;
@@ -58,6 +65,7 @@ void Foam::fv::bladeSurfaceSource::createOutputFiles()
     if (writeNodePerf_)
     {
         nodeFile_ = new OFstream(dir/name_ + "_nodes.csv");
+        nodeFile_->precision(12);
 
         *nodeFile_
             << "time,node,x,y,z,nx,ny,nz,fx,fy,fz,area,station,"
