@@ -269,6 +269,7 @@ bodyOrigin            (0 0 0);        // optional body-frame override
 bodyAxis              (0 0 1);        // optional body-frame override
 writePerf             true;           // per-station CSV
 writeNodePerf         false;          // opt-in per-node CSV
+logDistribution       true;           // per-addSup instrumentation line/CSV
 ```
 
 `surfaceGeometry` accepts an ASCII or binary STL; it is read as given, or
@@ -314,6 +315,15 @@ Written on the master rank under `postProcessing/bladeSurface/`:
 - `<owner>.surface_nodes.csv` (`writeNodePerf`, default `false`):
   `time,node,x,y,z,nx,ny,nz,fx,fy,fz,area,station,chord_fraction`, per node in
   the blade body frame with the force on the blade in SI units.
+- `<owner>.surface_distribution.csv` (`logDistribution`, default `true`):
+  `time,nodes,candidates,mean_candidates,max_candidates,seconds`, one row per
+  `distribute()` call. `candidates` is the number of candidate cell entries
+  visited in that call (the bounded-query evidence: it is far below the naive
+  `nodes * N_local cells` scan), `mean_candidates`/`max_candidates` are the
+  per-node mean and maximum, and `seconds` is the wall time of the call. The
+  same counts are emitted as one `Info` line on the master rank
+  (`Blade surface distribution '<owner>.surface': ...`). The counters are
+  observational only and never change the distributed result.
 
 Both files are written with 12 significant digits: the per-node file is the
 audit source of the moment convention below and its reconstruction oracle

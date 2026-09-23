@@ -29,6 +29,8 @@ License
 #include "OSspecific.H"
 #include "PstreamReduceOps.H"
 
+#include <chrono>
+
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 void Foam::fv::bladeSurfaceSource::createOutputFiles()
@@ -49,20 +51,23 @@ void Foam::fv::bladeSurfaceSource::createOutputFiles()
         mkDir(dir);
     }
 
-    stationFile_ = new OFstream(dir/name_ + ".csv");
+    if (writePerf_)
+    {
+        stationFile_ = new OFstream(dir/name_ + ".csv");
 
-    // The per-node CSV is the source of the design's surface-moment
-    // reconstruction oracle (rtol 1e-6, design section 8.1); the default six
-    // significant digits cannot represent it. Per-stream precision, so the
-    // element and turbine CSVs keep the delivered precision (and the ALM /
-    // no-mesh ASM outputs stay byte-identical).
-    stationFile_->precision(12);
+        // The per-node CSV is the source of the design's surface-moment
+        // reconstruction oracle (rtol 1e-6, design section 8.1); the default
+        // six significant digits cannot represent it. Per-stream precision, so
+        // the element and turbine CSVs keep the delivered precision (and the
+        // ALM / no-mesh ASM outputs stay byte-identical).
+        stationFile_->precision(12);
 
-    *stationFile_
-        << "time,station,root_dist,area,force_x,force_y,force_z,"
-        << "c_ref_n,c_ref_t,f_ref_n,f_ref_t" << endl;
+        *stationFile_
+            << "time,station,root_dist,area,force_x,force_y,force_z,"
+            << "c_ref_n,c_ref_t,f_ref_n,f_ref_t" << endl;
+    }
 
-    if (writeNodePerf_)
+    if (writePerf_ and writeNodePerf_)
     {
         nodeFile_ = new OFstream(dir/name_ + "_nodes.csv");
         nodeFile_->precision(12);
@@ -70,6 +75,18 @@ void Foam::fv::bladeSurfaceSource::createOutputFiles()
         *nodeFile_
             << "time,node,x,y,z,nx,ny,nz,fx,fy,fz,area,station,"
             << "chord_fraction" << endl;
+    }
+
+    if (logDistribution_)
+    {
+        // Per-addSup instrumentation (D6): one row per distribute() on the
+        // master rank. Counters only, so the distribution is unaffected.
+        distributionFile_ = new OFstream(dir/name_ + "_distribution.csv");
+        distributionFile_->precision(12);
+
+        *distributionFile_
+            << "time,nodes,candidates,mean_candidates,max_candidates,seconds"
+            << endl;
     }
 }
 
@@ -165,10 +182,14 @@ Foam::fv::bladeSurfaceSource::bladeSurfaceSource
     name_(ownerName + ".surface"),
     writePerf_(dict.lookupOrDefault("writePerf", true)),
     writeNodePerf_(dict.lookupOrDefault("writeNodePerf", false)),
+    logDistribution_(dict.lookupOrDefault("logDistribution", true)),
     stationFile_(nullptr),
-    nodeFile_(nullptr)
+    nodeFile_(nullptr),
+    distributionFile_(nullptr),
+    lastCandidateTotal_(0),
+    lastSeconds_(0.0)
 {
-    if (writePerf_)
+    if (writePerf_ or logDistribution_)
     {
         createOutputFiles();
     }
@@ -185,6 +206,7 @@ Foam::fv::bladeSurfaceSource::~bladeSurfaceSource()
 {
     delete stationFile_;
     delete nodeFile_;
+    delete distributionFile_;
 }
 
 
@@ -197,6 +219,11 @@ void Foam::fv::bladeSurfaceSource::distribute
     const volScalarField* rhoPtr
 )
 {
+    // Per-addSup wall clock (D6). Instrumentation only: the distribution
+    // below is byte-identical with or without it.
+    const std::chrono::steady_clock::time_point startTime =
+        std::chrono::steady_clock::now();
+
     // Compressible overload: the element's public force() carries the density
     // at the element position (multiplyForceRho), so the element-local density
     // is needed to recover the per-unit-density share
@@ -291,6 +318,51 @@ void Foam::fv::bladeSurfaceSource::distribute
     }
 
     bladeForce = returnReduce(total, sumOp<vector>());
+
+    // Per-addSup instrumentation (D6, spec "Bounded distribution and
+    // performance measurement"): candidate entries and wall seconds. The
+    // candidate lists are static, so the counts repeat on every call. The
+    // reductions are collective; only the master rank prints/writes.
+    label localCandidates = 0;
+    label localMax = 0;
+
+    forAll(sampler_.candidates_, i)
+    {
+        const label n = sampler_.candidates_[i].size();
+        localCandidates += n;
+        localMax = max(localMax, n);
+    }
+
+    lastCandidateTotal_ = returnReduce(localCandidates, sumOp<label>());
+    const label maxCandidates = returnReduce(localMax, maxOp<label>());
+    lastSeconds_ = std::chrono::duration<scalar>
+    (
+        std::chrono::steady_clock::now() - startTime
+    ).count();
+
+    if (logDistribution_ and Pstream::master())
+    {
+        const label nNodes = sampler_.nNodes();
+        const scalar meanCandidates =
+            nNodes ? scalar(lastCandidateTotal_)/scalar(nNodes) : 0.0;
+
+        Info<< "Blade surface distribution '" << name_ << "': "
+            << "nodes " << nNodes
+            << ", candidates " << lastCandidateTotal_
+            << ", mean " << meanCandidates
+            << ", max " << maxCandidates
+            << ", seconds " << lastSeconds_ << endl;
+
+        if (distributionFile_)
+        {
+            *distributionFile_ << mesh_.time().value()
+                << "," << nNodes
+                << "," << lastCandidateTotal_
+                << "," << meanCandidates
+                << "," << maxCandidates
+                << "," << lastSeconds_ << endl;
+        }
+    }
 
     writeOutput();
 }

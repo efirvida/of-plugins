@@ -57,8 +57,9 @@ Description
     Output (master rank only, \c postProcessing/bladeSurface/):
 
     \verbatim
-    <owner>.surface.csv         per-station (writePerf, default true)
-    <owner>.surface_nodes.csv   per-node (writeNodePerf, default false)
+    <owner>.surface.csv              per-station (writePerf, default true)
+    <owner>.surface_nodes.csv        per-node (writeNodePerf, default false)
+    <owner>.surface_distribution.csv per-addSup instrumentation (logDistribution)
     \endverbatim
 
     The per-station schema is
@@ -67,6 +68,15 @@ Description
     \c time,node,x,y,z,nx,ny,nz,fx,fy,fz,area,station,chord_fraction
     (design section 4.5); the per-node quantities are the body-frame SI
     contract.
+
+    Instrumentation (D6, spec "Bounded distribution and performance
+    measurement"): each \c distribute() counts the surface nodes, the
+    candidate entries visited and the wall seconds, reduces the candidate
+    total/maximum across ranks and, when \c logDistribution (default true),
+    emits one \c Info line on the master rank and appends one row to
+    \c <owner>.surface_distribution.csv. The counters are observational only:
+    the distribution result is unchanged. The schema is
+    \c time,nodes,candidates,mean_candidates,max_candidates,seconds.
 
 SourceFiles
     bladeSurfaceSource.C
@@ -118,11 +128,23 @@ class bladeSurfaceSource
         //- Switch for the opt-in per-node CSV
         bool writeNodePerf_;
 
+        //- Switch for the per-addSup instrumentation line and CSV (D6)
+        bool logDistribution_;
+
         //- Per-station output file stream
         OFstream* stationFile_;
 
         //- Per-node output file stream
         OFstream* nodeFile_;
+
+        //- Per-addSup instrumentation file stream (logDistribution_)
+        OFstream* distributionFile_;
+
+        //- Candidate entries visited in the last distribute(), global sum
+        label lastCandidateTotal_;
+
+        //- Wall seconds of the last distribute()
+        scalar lastSeconds_;
 
 
     // Private Member Functions

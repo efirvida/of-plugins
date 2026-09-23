@@ -44,6 +44,7 @@ from __future__ import division, print_function
 
 import glob
 import os
+import re
 import shutil
 import subprocess
 
@@ -62,6 +63,9 @@ AFTAL_CASE_DIR = os.path.join(
 STATION_CSV = os.path.join("postProcessing", "bladeSurface", "blade.surface.csv")
 NODE_CSV = os.path.join(
     "postProcessing", "bladeSurface", "blade.surface_nodes.csv"
+)
+DISTRIBUTION_CSV = os.path.join(
+    "postProcessing", "bladeSurface", "blade.surface_distribution.csv"
 )
 ELEMENT_CSV = os.path.join(
     "postProcessing", "actuatorLineElements", "0", "blade.element0.csv"
@@ -106,6 +110,22 @@ NODE_COLUMNS = [
     "station",
     "chord_fraction",
 ]
+DISTRIBUTION_COLUMNS = [
+    "time",
+    "nodes",
+    "candidates",
+    "mean_candidates",
+    "max_candidates",
+    "seconds",
+]
+
+# The per-addSup instrumentation line (D6/W4.1). The format is pinned here so
+# the spec's "Measurement output present" scenario is an executable oracle.
+DISTRIBUTION_RE = re.compile(
+    r"Blade surface distribution 'blade\.surface': "
+    r"nodes (\d+), candidates (\d+), mean ([0-9eE.+-]+), "
+    r"max (\d+), seconds ([0-9eE.+-]+)"
+)
 
 # Analytic fixture constants (see tests/bladeSurface/system)
 N_TIMES = 2
@@ -127,6 +147,11 @@ ELEMENT_ROOT_DIST = 0.5
 # Triangle centroids in the canonical generation frame (face order of the STL)
 NODE_STATION = {0: 0.5333333333333333, 1: 0.4666666666666667}
 NODE_CHORD_FRACTION = {0: 0.6666666666666666, 1: 0.3333333333333333}
+
+# Fixture mesh size (tests/bladeSurface/system/blockMeshDict): 26^3 uniform
+# 0.1 m cells. The naive distribution would scan every local cell per node
+# (N_NODES * N_LOCAL_CELLS); the bounded query visits only the kernel support.
+N_LOCAL_CELLS = 26**3
 
 # Discrete sum of the delivered element strip projection in this fixture
 # (truncated Gaussian, unclipped support): the default-path integral is this
@@ -220,6 +245,10 @@ def _read_station(case_dir):
 
 def _read_nodes(case_dir):
     return pd.read_csv(os.path.join(case_dir, NODE_CSV))
+
+
+def _read_distribution(case_dir):
+    return pd.read_csv(os.path.join(case_dir, DISTRIBUTION_CSV))
 
 
 def _read_element(case_dir):
@@ -487,6 +516,76 @@ def test_partition_invariants_from_csv(surface_case):
     # Every node is assigned to the single patch: its station lies within the
     # patch span and the element station lies inside it (non-empty patch)
     assert nodes.station.min() < ELEMENT_STATION < nodes.station.max()
+
+
+def test_instrumentation_line(surface_case, default_case):
+    """Per-`addSup` instrumentation reports the bounded candidate query (D6).
+
+    The instrumented run emits one pinned line per `distribute()` and appends
+    a matching row to `<owner>.surface_distribution.csv`. The candidate count
+    must be far below the naive full local-cell scan (`N_NODES *
+    N_LOCAL_CELLS`) and the instrumentation must not alter the distribution:
+    the patch force is still the analytic element force and the field integral
+    still equals the patch total (partition of unity). The no-surface default
+    run is never instrumented.
+    """
+    log = _read_log(surface_case)
+    matches = DISTRIBUTION_RE.findall(log)
+    assert matches, "no per-addSup instrumentation line in the surface run"
+
+    # The candidate lists are built once, so every call reports the same counts
+    counts = set()
+    for nodes, candidates, mean, max_candidates, seconds in matches:
+        assert int(nodes) == N_NODES
+        assert int(candidates) > 0
+        assert int(max_candidates) >= 1
+        assert float(seconds) >= 0.0
+        assert_allclose(
+            float(mean), int(candidates) / N_NODES, rtol=1e-4, atol=1e-9
+        )
+        counts.add((int(candidates), int(max_candidates)))
+    assert len(counts) == 1
+
+    candidates, max_candidates = counts.pop()
+
+    # Bounded query: the support stencil (<= 5^3 cells per node here) is far
+    # below the naive N_NODES * N_LOCAL_CELLS scan
+    naive = N_NODES * N_LOCAL_CELLS
+    assert candidates < naive / 10
+    assert candidates <= N_NODES * 5**3
+    assert max_candidates <= 5**3
+    assert max_candidates >= candidates // N_NODES
+
+    # The CSV mirrors the line, with the documented schema
+    dist = _read_distribution(surface_case)
+    assert list(dist.columns) == DISTRIBUTION_COLUMNS
+    assert len(dist) == len(matches)
+    assert_array_equal(dist.nodes, N_NODES)
+    assert_array_equal(dist.candidates, candidates)
+    assert_array_equal(dist.max_candidates, max_candidates)
+    assert np.all(np.isfinite(dist.to_numpy(dtype=float)))
+    assert np.all(dist.seconds >= 0.0)
+
+    # Instrumentation does not change the distribution result: the surface
+    # patch force is still the analytic element force and the field integral
+    # still equals the patch total (partition of unity)
+    station = _read_station(surface_case)
+    assert_allclose(
+        _row_vector(station.iloc[0], ["force_x", "force_y", "force_z"]),
+        [F_ELEMENT, 0.0, 0.0],
+        rtol=1e-12,
+        atol=1e-15,
+    )
+    for time, vec in _read_force_integral(surface_case):
+        patch = _row_vector(
+            station[station.time == time].iloc[-1],
+            ["force_x", "force_y", "force_z"],
+        )
+        assert_allclose(vec, -patch, rtol=1e-5, atol=1e-12)
+
+    # The no-surface default run is never instrumented
+    assert not DISTRIBUTION_RE.search(_read_log(default_case))
+    assert not os.path.isfile(os.path.join(default_case, DISTRIBUTION_CSV))
 
 
 # Rotating-fixture tests (design 8.1): the minimal AFTAL fixture drives the
