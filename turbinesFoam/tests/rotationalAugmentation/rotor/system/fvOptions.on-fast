@@ -1,0 +1,87 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Augmentation-on rotor at TSR 50: the outboard element (r = 0.35 m) sits at
+// a pre-stall angle of attack (~1.47 deg) where the static lift equals the
+// potential-flow lift, so the Eq. 9 correction vanishes (spec "Pre-stall lift
+// unchanged").
+
+turbine
+{
+    type            axialFlowTurbineALSource;
+    active          on;
+
+    axialFlowTurbineALSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             turbine;
+        origin              (0 0 0);
+        axis                (1 0 0);
+        verticalDirection   (0 0 1);
+        freeStreamVelocity  (10 0 0);
+        tipSpeedRatio       50.0;
+        rotorRadius         0.45;
+
+        dynamicStall
+        {
+            active          off;
+            dynamicStallModel LeishmanBeddoes;
+        }
+
+        rotationalAugmentation
+        {
+            active          on;
+            model           DuSelig;
+            a               1;
+            b               1;
+            d               1;
+        }
+
+        endEffects
+        {
+            active          off;
+            endEffectsModel Glauert;
+        }
+
+        blades
+        {
+            blade1
+            {
+                writePerf           true;
+                writeElementPerf    true;
+                elementType         actuatorLineElement;
+                nElements           2;
+                elementProfiles     (S809 S809);
+                elementData
+                (
+                    (0.0  0.05  0.0  0.04  0.25  0.0)
+                    (0.0  0.45  0.0  0.04  0.25  0.0)
+                );
+            }
+        }
+
+        profileData
+        {
+            S809
+            {
+                data (#include "S809.dat");
+            }
+        }
+    }
+}
+
+// ************************************************************************* //

@@ -23,6 +23,7 @@ SOLVER_DRIVEN = (
     "test_cftal.py",
     "test_libs.py",
     "test_nacelle.py",
+    "test_rotational_augmentation.py",
 )
 
 
