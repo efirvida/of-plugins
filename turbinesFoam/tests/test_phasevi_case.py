@@ -297,7 +297,14 @@ def test_asm_mesh_selection(cfg, tmp_path):
     shim = tmp_path / "bin"
     shim.mkdir()
     (shim / "python3").symlink_to(sys.executable)
-    env = dict(os.environ)
+    # The sandbox must be isolated from an ambient Slurm allocation: the runner
+    # enforces --ranks == SLURM_NTASKS when SLURM_NTASKS is set, so inheriting
+    # the batch job's SLURM_* would make this test fail inside a compute node.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("SLURM_")
+    }
     env["PATH"] = str(shim) + os.pathsep + env.get("PATH", "")
 
     prepared = subprocess.run(
