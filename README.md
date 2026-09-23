@@ -55,6 +55,12 @@ No submodules are used. All code is self-contained and built with `wmake`.
     with chord-averaged inflow and mesh-based projection width; ALM remains
     the byte-identical default. HAWT tutorial at
     `tutorials/axialFlowTurbineASM/` with an ALM-vs-ASM comparison script.
+  - **Fork extension:** mesh-backed blade **actuator surface over an imported
+    triangulation** (`surfaceGeometry` in a blade subdict): the element load is
+    mapped onto the committed `phaseVI_blade` wetted surface and distributed
+    with the paper-cosine kernel (default) or a `kernel gaussian` ablation;
+    ALM and the no-mesh ASM stay byte-identical when `surfaceGeometry` is
+    absent.
   - **Fork extension:** nacelle/hub **actuator surface model**
     (`type nacelleSurfaceSource;`), usable standalone or composed through
     `axialFlowTurbineALSource`'s `nacelle {}` subdict; the reusable
@@ -63,29 +69,36 @@ No submodules are used. All code is self-contained and built with `wmake`.
     restart-safe (`angleDeg.<name>` / `omega.<name>` registry fields).
   - **Fork extension:** deterministic `geometry/` pipeline (gmsh +
     `makeGeometry.py --check`) and the `validation/nacelle-asn/` periodic-nacelle
-    benchmark against Yang & Sotiropoulos (arXiv:1702.02108v4).
+    benchmark against Yang & Sotiropoulos (arXiv:1702.02108v4). The pipeline's
+    second component, `phaseVI_blade`, is a **pure-Python** structured loft
+    (S809 + Phase VI stations, no gmsh) committed as a binary STL with per-node
+    station/chord metadata and provenance.
   - See [turbinesFoam/README.md](turbinesFoam/README.md) for original documentation.
 
 ## NREL Phase VI validation (`turbinesFoam/validation/phaseVI/`)
 
 Uniform-inflow validation package for the NREL/NASA-Ames Phase VI rotor with
-the ALM and ASM models. A YAML single source of truth renders an 18-block hex
+three models: ALM, the no-mesh ASM and the mesh-backed ASM over the imported
+`phaseVI_blade` surface. A YAML single source of truth renders an 18-block hex
 case at D/32 (6.67 M cells), D/48 (22.5 M) or D/64 (53.4 M), with per-speed
-measured TSR kinematics, the ALM/ASM `fvOptions` twins, committed WDH
+measured TSR kinematics, the ALM/ASM/ASM-MESH `fvOptions` twins, committed WDH
 experimental anchors and per-directory data provenance.
 
-- `scripts/runPhaseVI.sh` prepares/runs/submits one variant and enforces the
-  queue gates; `scripts/comparePhaseVI.py` merges simulation output with the
-  measured rows and writes the spanwise/turbine comparisons, `metrics.json`,
-  and the 7 m/s sign gate.
+- `scripts/runPhaseVI.sh` prepares/runs/submits one variant (staging the
+  hash-checked blade STL for `-m asm-mesh`) and enforces the queue gates;
+  `scripts/comparePhaseVI.py` merges simulation output with the measured rows
+  three ways and writes the spanwise/turbine comparisons, `metrics.json`, and
+  the 7 m/s sign gate.
 - Staged plan: Stage 0 (mesh check + ≤ 0.3 revolution 7 m/s stability runs on
-  `sequana_cpu_dev`) is the only authorized execution; Stages 1–3 (7 m/s
-  headline, the {10, 13, 15, 25} m/s extension plus the Sequence S repeat, and
-  the optional IDDES / `nChordwise` / D/64 items) are prepared but **must not
-  be submitted** until the long-queue authorization is granted.
+  `sequana_cpu_dev`) is the only authorized execution; Stages 1–3 and the
+  ASM-mesh array (7 m/s D/32 performance gate then D/48 headline) are prepared
+  but **must not be submitted** until the long-queue authorization is granted.
+- The mesh-backed variant tests model form, not resolved chordwise physics: at
+  every affordable mesh the imported surface is sub-grid, and the Gaussian
+  kernel is documented as an ablation of the kernel/width confound.
 - See [turbinesFoam/validation/phaseVI/README.md](turbinesFoam/validation/phaseVI/README.md)
-  for setup, metric definitions, tolerance bands and the modelling
-  limitations.
+  for setup, metric definitions, tolerance bands, the pre-registered hypothesis
+  and the modelling limitations.
 
 ## Nacelle actuator-surface validation (`turbinesFoam/validation/nacelle-asn/`)
 

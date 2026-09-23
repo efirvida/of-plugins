@@ -1,8 +1,13 @@
 # NREL Phase VI uniform-inflow validation
 
 Validation package for the NREL/NASA-Ames Phase VI rotor (10.058 m diameter,
-standard 5.029 m tip, two blades, 3° pitch) coupled to the vendored
-`turbinesFoam` actuator line (ALM) and actuator surface (ASM) models.
+standard 5.029 m tip, two blades, 3° pitch) coupled to three vendored
+`turbinesFoam` models: the actuator line (ALM), the no-mesh actuator surface
+(ASM) and the mesh-backed actuator surface (`fvOptions.ASM-MESH`, the imported
+`phaseVI_blade` surface). The three variants differ only in the blade
+subdictionary element/surface keys; see "Model variants and formulation" for
+the formulation being validated, the sub-grid caveat and the pre-registered
+hypothesis.
 
 The case is a uniform-inflow free box (no atmospheric boundary layer, no Mann
 turbulence, no external inflow preprocessing):
@@ -30,13 +35,15 @@ config/case.yaml          single source of truth (YAML)
 tools/case_config.py      load/validate YAML; derived mesh/kinematics helpers
 tools/generate_case.py    renderer + non-destructive --check
 tools/element_data.py     blade/hub element rows, -(twist + pitch) convention
-case/                     committed generated skeleton (ALM/ASM twins)
-data/                     geometry, polars, experiment + PROVENANCE per dir
+tools/stage_blade_stl.py  sha256-gated STL staging for asm-mesh run dirs
+case/                     committed generated skeleton (ALM/ASM/ASM-MESH twins)
+data/                     geometry, polars, experiment, s809 + PROVENANCE per dir
 scripts/                  runners, mesh/stage tooling, comparison
   slurm/stage0.slurm      authorized development-queue job
   slurm/production.slurm  prepared-only long-queue array (do not submit)
   slurm/stage3.slurm      prepared-only IDDES + nChordwise array (do not submit)
   slurm/stage3-d64.slurm  prepared-only D/64 sensitivity array (do not submit)
+  slurm/asm-mesh.slurm    prepared-only ASM-mesh D/32 gate + D/48 array (do not submit)
 runs/                     rendered run directories (gitignored)
 results/                  comparison output (gitignored)
 ```
@@ -92,7 +99,7 @@ refines z like x/y); recorded in `design.md` §5 and `config/case.yaml`.
 ## Running
 
 ```sh
-scripts/runPhaseVI.sh -m alm|asm -u <speed> [-mesh coarse|fine|ultra]
+scripts/runPhaseVI.sh -m alm|asm|asm-mesh -u <speed> [-mesh coarse|fine|ultra]
                       [--domain long|squat] [-s H|S] [--solver urans|iddes]
                       [--nchordwise N] [--ranks N] [--stage0] [--restart]
                       [--run] [--submit]
@@ -126,6 +133,15 @@ commit, OpenFOAM version, config sha256, variant, solver, `n_chordwise`,
   **and** a passing `results/U7-H/sign_gate.json`; otherwise it exits 5. It
   refuses to carry `--solver iddes`, `--nchordwise` or `--ranks` (Stage 3 has
   its own prepared arrays).
+- `-m asm-mesh` selects the mesh-backed surface twin (`fvOptions.ASM-MESH`),
+  produces the run id `asm-mesh-U<speed>-<mesh>`, and stages the committed
+  `geometry/stl/phaseVI_blade.stl` into `constant/triSurface/` through
+  `tools/stage_blade_stl.py` before the mesh link (sha256-checked against the
+  geometry metadata; a missing source or a hash mismatch aborts with exit 3 and
+  leaves no stale copy). The staged hash is recorded in `run.json` as
+  `staged_stl_sha256`. `--nchordwise` is accepted (ASM family) and `--submit`
+  is refused (exit 2) pointing at the prepared-only
+  `scripts/slurm/asm-mesh.slurm`.
 
 Exit codes: **2** unsupported input (including a `--ranks`/`SLURM_NTASKS`
 mismatch), **3** environment/mesh/solver failure, **4** stale generated case,
@@ -166,13 +182,15 @@ hexahedra, non-orthogonality ≤ 1e-10 and the cell count inside the band from
 | 1 | 7 m/s URANS ALM+ASM, D/32 first then D/48 | long | prepared |
 | 2 | {10, 13, 15, 25} m/s ALM+ASM + Sequence S 7 m/s repeat | long | prepared |
 | 3 | IDDES ALM+ASM D/32+D/48, ASM `nChordwise` {1, 3} D/48, D/64 ALM+ASM sensitivity | long | prepared |
+| asm-mesh | Mesh-backed ASM 7 m/s: D/32 performance gate, then D/48 headline | long | prepared |
 
-Stages 1–3 are prepared but **must not be submitted** until the long-queue
-authorization is granted. 20 m/s stays renderable but is deliberately not
-staged, so no blanket job array can pick it up. `slurm/production.slurm` is a
-**prepared-only** array: one task per (model, speed, mesh, sequence), 48 ranks,
-≤ 96 h per task, restart from `latestTime`. It refuses to run without
-`PHASEVI_LONG_QUEUE_AUTHORIZED=1`, and no script submits it automatically.
+Stages 1–3 and the ASM-mesh array are prepared but **must not be submitted**
+until the long-queue authorization is granted. 20 m/s stays renderable but is
+deliberately not staged, so no blanket job array can pick it up.
+`slurm/production.slurm` is a **prepared-only** array: one task per (model,
+speed, mesh, sequence), 48 ranks, ≤ 96 h per task, restart from `latestTime`.
+It refuses to run without `PHASEVI_LONG_QUEUE_AUTHORIZED=1`, and no script
+submits it automatically.
 
 ### Stage 3 arrays (prepared only)
 
@@ -195,11 +213,86 @@ heavier than the 48-rank Stage 1 jobs. At 48 ranks a single D/64 run would need
 about 194 h, so the D/64 array runs at 384 ranks (8×), which fits comfortably
 in one 96 h task.
 
+### ASM-mesh array (prepared only)
+
+`slurm/asm-mesh.slurm` follows the `production.slurm` shape: 48 ranks on one
+node, `--time=24:00:00` (the delta's at-most-24 h bound, stricter than the
+untouched 96 h `production.slurm`), `--array=0-1`, both tasks `--restart --run`.
+Task 0 is `asm-mesh:7:coarse:H` — the **D/32 performance measurement gate** —
+and task 1 is `asm-mesh:7:fine:H`, the headline run. The script refuses to run
+without `PHASEVI_LONG_QUEUE_AUTHORIZED=1` (exit 5) and resolves the package from
+`$SLURM_SUBMIT_DIR`, so it is **prepared only**: the D/32 task is executed and
+reviewed (proceed / harden the candidate query / restrict the campaign) before
+any D/48 preparation, and no automated step of this change submits it. The
+queued `phaseVI-prod`, `phaseVI-stage3` and `phaseVI-stage3-d64` arrays are
+read-only baselines.
+
+## Model variants and formulation
+
+Three `fvOptions` twins are rendered from the same configuration and differ
+only in the blade subdictionary element/surface keys:
+
+| Variant | Blade keys | Model |
+|---|---|---|
+| `fvOptions.ALM` | `elementType actuatorLineElement;` | actuator line (baseline) |
+| `fvOptions.ASM` | `elementType actuatorSurfaceElement; nChordwise 5;` | no-mesh actuator surface |
+| `fvOptions.ASM-MESH` | the surface keys plus `surfaceGeometry "constant/triSurface/phaseVI_blade.stl";` (and `kernel gaussian;` only for the ablation) | mesh-backed actuator surface |
+
+**Formulation.** The mesh-backed variant implements the paper's chord-line blade
+ASM (Yang & Sotiropoulos, arXiv:1702.02108v4) **extended to an imported
+surface**: the blade load is mapped from the line elements onto the nodes of the
+committed `phaseVI_blade` triangulation (element→patch association by radial
+station, patch-area share per element) and distributed over the background cells
+with the selected kernel (Eq. 18). It is explicitly **not a literal equation
+port**: the paper's surface construction is replaced by the imported wetted
+mesh, and the surface does not sample per-node inflow or recompute BEM loads
+(the element BEM chain, chord-averaged inflow, dynamic stall, added mass and end
+effects are unchanged). The surface is therefore a **distribution-only** model.
+
+**Sub-grid caveat.** At D/32–D/64 the background cells are 0.314/0.210/0.157 m
+while the blade chord is 0.218–0.744 m, so the imported surface is **sub-grid**:
+the three-way comparison tests **model form** (how the load is distributed),
+not resolved chordwise physics.
+
+**Kernel/width confound and the Gaussian ablation.** The paper-cosine surface
+(`kernel cosine`, default; support `2.5·h_i`) and the no-mesh ASM's mesh-only
+Gaussian width (`kernel gaussian`; `ε_i = 2·cbrt(V_i)·meshFactor`) differ in
+both kernel and width. `kernel gaussian` on the mesh-backed variant is the
+**kernel-matched ablation** that narrows this confound (it does not eliminate
+it: the no-mesh ASM uses one `ε` per element while the surface uses one per
+node). It is an ablation, not a model, and is rendered only when selected.
+
+**Pre-registered hypothesis.** Before the campaign, the expected direction and
+approximate size of the geometry effect on the spanwise load are recorded here,
+so the comparison tests a stated hypothesis rather than a post-hoc "the mesh is
+better" claim:
+
+- The imported-surface load is expected to shift the spanwise `c_ref_n` toward
+  the blade **root transition and tip** first, where the chord-line element
+  representation is coarsest, with the mid-span least affected.
+- The expected size of the effect is of the order of the spanwise band
+  (max(0.15, 20 % of measured)) or smaller, and **not** a resolved-chordwise
+  redistribution; no agreement better than the documented band is promised a
+  priori.
+- The geometry effect is separated from the kernel/width confound by the
+  Gaussian ablation above.
+
+**MEXICO naming resolution.** The committed blade is the Phase VI
+`phaseVI_blade` component; one STL serves both identical Phase VI blades
+(azimuth is runtime). The retired `blade0/1/2` reservation encoded an un-sourced
+per-blade assumption and is not re-used: a future MEXICO blade is a separate
+`mexico_blade` component owned by the `mexico-validation` change, not by this
+package.
+
+**Prepared-only.** All prepared stages and arrays, including the ASM-mesh array,
+are never submitted by this change; see the staged plan above.
+
 ## Comparison
 
 ```sh
 scripts/comparePhaseVI.py --alm-dir runs/alm-U7-coarse-s0 \
                           --asm-dir runs/asm-U7-coarse-s0 \
+                          --asm-mesh-dir runs/asm-mesh-U7-coarse \
                           --speed 7 --sequence H --sign-gate
 ```
 
@@ -211,6 +304,17 @@ experimental CSVs, and writes `turbine_comparison.csv`,
 `results/U<speed>-<sequence>/`). It averages revolutions 4–12 after discarding
 revolutions 0–4, flags power/thrust drift above 1 %, and interpolates
 `c_ref_n`/`c_ref_t` to 30/47/63/80/95 % span.
+
+With `--asm-mesh-dir` the comparison is **three-way**: it additionally reads the
+window-filtered `postProcessing/bladeSurface/*.csv` station table (the
+per-node `*_nodes.csv` output is not a station table), merges station rows by
+station id, and maps each station's `root_dist` to r/R with the existing
+element formula (no coefficient definition is redefined). Turbine metrics come
+from the same `turbine.csv` (the surface moment is already in the AFTAL
+torque). A missing or incomplete ASM-mesh directory fails loudly
+(`EXIT_MISSING_INPUT`), never falling back to a two-model merge. `metrics.json`
+records the staged STL hash (`staged_stl_sha256`) and the surface kernel
+(`surface_kernel`, `cosine` default) for the fair-comparison check.
 
 Metric definitions (F1-corrected, fixed against the NREL reports; printed in
 every output):
@@ -253,6 +357,15 @@ a passing `results/U7-H/sign_gate.json`.
 - Sub-cell ASM chord strips: at every affordable mesh (D/32–D/64) the
   chordwise strips are sub-grid, so the comparison tests chord-averaged inflow
   and the ALM-vs-ASM load shift, not a chord-resolved surface.
+- **Sub-grid imported surface**: the mesh-backed ASM is sub-grid too (cells
+  0.314/0.210/0.157 m versus chord 0.218–0.744 m); the three-way comparison
+  tests model form, not resolved chordwise physics.
+- **Kernel/width confound**: the paper-cosine surface and the no-mesh Gaussian
+  ASM differ in kernel and width; the `kernel gaussian` mesh-backed run is the
+  kernel-matched ablation, not a model, and narrows but does not eliminate the
+  confound.
+- **Distribution-only**: the surface redistributes the element load; it does
+  not sample per-node inflow or recompute BEM loads.
 - URANS `kOmegaSST` cannot capture deep-stall unsteadiness or hysteresis; the
   separated high-speed points (13–25 m/s) are trend and stall-onset evidence
   only.
@@ -264,21 +377,29 @@ a passing `results/U7-H/sign_gate.json`.
 ## Data and tests
 
 `data/geometry/` (TP-500-29955 Table A-1), `data/polars/` (TP-500-29955 A-3..A-8
-and TP-442-7817 B1..B4) and `data/experiment/` (WDH `wt_loads_statistics.xls`,
-sheet `ldsmean`, 0° yaw) each carry a `PROVENANCE.md` with DOI/URL, source
-sha256, sheet/table, row selection, units and extraction date. No report PDF
-or workbook is committed.
+and TP-442-7817 B1..B4), `data/experiment/` (WDH `wt_loads_statistics.xls`,
+sheet `ldsmean`, 0° yaw) and `data/s809/` (Somers, NREL/SR-440-6918, Table 2)
+each carry a `PROVENANCE.md` with DOI/URL, source sha256, sheet/table, row
+selection, units and extraction date. No report PDF or workbook is committed.
+The imported blade surface itself is the committed `phaseVI_blade` component in
+`turbinesFoam/geometry/` (binary STL + §4.6 metadata + `PROVENANCE.md`), built
+by the pure-Python loft from `data/geometry/phaseVI_blade.csv` and the committed
+S809 coordinates; `runPhaseVI.sh -m asm-mesh` stages it, hash-checked, into each
+run directory.
 
 ```sh
 python3 -m pytest turbinesFoam/tests/test_phasevi_case.py \
                     turbinesFoam/tests/test_phasevi_data.py \
-                    turbinesFoam/tests/test_phasevi_compare.py -q
+                    turbinesFoam/tests/test_phasevi_compare.py \
+                    turbinesFoam/tests/test_blade_stage.py -q
 python3 -m pytest turbinesFoam/tests/ -q   # solver-driven suites auto-skip without OpenFOAM
 ```
 
 The Phase VI tests are pure Python (no OpenFOAM): the case/data contracts plus
 the comparison tooling (F1 metric formulas, `root_dist`→r/R mapping, drift
-flag, fail-loud exit codes, sign gate, dry merge on synthetic fixtures). The
+flag, fail-loud exit codes, sign gate, three-way dry merge on synthetic
+fixtures including the real `bladeSurface` CSV schema) and the STL staging
+helper (hash match, mismatch/missing-source abort, run-directory layout). The
 upstream turbinesFoam tutorial tests are skipped when `WM_PROJECT_VERSION` is
 unset.
 
@@ -291,8 +412,17 @@ this package is distributed under **GPL-3.0-or-later**, consistent with
 `turbinesFoam` (see `turbinesFoam/LICENSE`).
 
 Data: rotor geometry and S809 polars are derived from the public U.S. Government
-reports NREL/TP-500-29955 (DOI 10.2172/15000240) and NREL/TP-442-7817; the
+reports NREL/TP-500-29955 (DOI 10.2172/15000240), NREL/TP-442-7817 and — for the
+committed S809 blade coordinates (`data/s809/`) — Somers, NREL/SR-440-6918; the
 measured load statistics come from the public NWTC WDH dataset
 (DOI 10.21947/WDH-DAP/1910052). No report PDF or workbook is redistributed —
 only derived numeric tables with per-directory `PROVENANCE.md` (source URL,
 sha256, sheet/table, row selection, units, extraction date).
+
+The mesh-backed surface model (`bladeSurfaceSampler` / `bladeSurfaceSource`) and
+the `phaseVI_blade` geometry component are **fork extensions**, not part of
+upstream `turbinesFoam`. This package is validated against the pinned `of-plugins`
+commit `26a1f46d79ff1481bba8d7fe2866516c367de232` (*feat(turbinesFoam): add
+actuator surface element type*), which carries the blade actuator-surface patch
+(`elementType actuatorSurfaceElement;`); later S2 commits add the imported
+surface distributor, the geometry component and the ASM-mesh variant.

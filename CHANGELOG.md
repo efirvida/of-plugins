@@ -785,3 +785,129 @@ restarts — an idempotency gap that blocks FSI.
 
 Reference: Yang, X. and Sotiropoulos, F., *A new class of actuator surface
 models for wind turbines*, arXiv:1702.02108v4 (2018), Sec. 2.2 and 4.1.
+
+---
+
+### New Features (S2 — blade actuator surface)
+
+#### 14. Add blade actuator surface over an imported blade mesh
+
+**Files:**
+- `turbinesFoam/src/fvOptions/nacelleSurface/surfaceSamplerBase.{H,C,I.H}` (new)
+- `turbinesFoam/src/fvOptions/bladeSurface/bladeSurfaceSampler.{H,C,I.H}` (new)
+- `turbinesFoam/src/fvOptions/bladeSurface/bladeSurfaceSource.{H,C,I.H}` (new)
+- `turbinesFoam/src/fvOptions/nacelleSurface/nacelleSurfaceSampler.{H,C,I.H}`,
+  `nacelleSurface/nacelleSurfaceSource.{H,C}` (updated)
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineSource.{H,C}`,
+  `actuatorLineElement/actuatorLineElement.{H,C}` (updated)
+- `turbinesFoam/src/fvOptions/axialFlowTurbineALSource/axialFlowTurbineALSource.C` (updated)
+- `turbinesFoam/src/Make/files` (updated)
+- `turbinesFoam/tests/test_blade_surface.py`, `tests/bladeSurface/**`,
+  `tests/bladeSurfaceAFTAL/**`, `tests/conftest.py` (new/updated)
+- `turbinesFoam/README.md` (updated)
+
+**Problem:** The ALM and no-mesh ASM sample the inflow at one collocation point
+per radial station, so the blade load cannot be mapped onto an imported wetted
+surface, and there was no way to suppress the element's strip projection when a
+surface owns the load. The S1 nacelle sampler's generic assets were duplicated
+in the blade path, and its distribution loop scanned all local cells per node.
+
+**Fix:**
+1. Extracted the frame- and force-model-agnostic `surfaceSamplerBase` (triSurface
+   load + case-relative resolution, body frame, `cellSize`, Eq. 7/8 kernels,
+   candidate-aware `distributeForce`) and re-based `nacelleSurfaceSampler` /
+   `nacelleSurfaceSource` on it; nacelle CSVs and `forceIntegral` remain
+   byte-identical to S1.
+2. New `bladeSurfaceSampler` / `bladeSurfaceSource`: canonical
+   triangle-centroid nodes, LE-based station/chord association, a 1-D Voronoi
+   element partition with fatal invariants, a per-rank uniform bin-grid bounded
+   candidate query, the paper cosine kernel (default) and a Gaussian width
+   ablation (`meshFactor` fallback chain), Eq. 18 distribution with the S1 sign,
+   a surface `moment(point)` and per-station/per-node CSVs.
+3. `actuatorLineSource` reads `surfaceGeometry`, injects `projectElementForce
+   false` (guarding only the element's `applyForceField`), owns the distributor,
+   forwards `rotate`/`translate`/`pitch`, and returns the surface moment; AFTAL
+   injects the construction frame (`surfaceOrigin`/`span`/`chord` directions).
+4. Integration tests cover partition of unity / no double count, rotation
+   lockstep, the surface moment in the turbine torque, the MPI total, Gaussian
+   conservation and the STL failure paths.
+
+---
+
+#### 15. Add the S809 / `phaseVI_blade` geometry component
+
+**Files:**
+- `turbinesFoam/validation/phaseVI/data/s809/s809_somers_nlr.csv` (new)
+- `turbinesFoam/validation/phaseVI/data/s809/PROVENANCE.md` (new)
+- `turbinesFoam/geometry/src/blade_phasevi.py` (new)
+- `turbinesFoam/geometry/src/makeGeometry.py` (updated: builder registry)
+- `turbinesFoam/geometry/stl/phaseVI_blade.stl`, `geometry/metadata/phaseVI_blade.json` (new)
+- `turbinesFoam/geometry/README.md`, `geometry/PROVENANCE.md` (updated)
+- `turbinesFoam/tests/test_blade_data.py` (new),
+  `tests/test_nacelle_data.py`, `tests/test_phasevi_data.py` (updated)
+
+**Problem:** The geometry pipeline had only the gmsh nacelle component and the
+`blade0/1/2` reservation deferred to an un-sourced MEXICO assumption, so there
+was no committed S809 profile and no deterministic Phase VI blade surface for
+the mesh-backed ASM.
+
+**Fix:**
+1. Committed the S809 coordinates (Somers, NREL/SR-440-6918, Table 2) with a
+   `PROVENANCE.md` and two independent cross-checks (TP-500-29955 Table A-2 and
+   Ramsay Table A1); re-extraction reproduces the committed CSV byte-identically.
+2. Added the pure-Python structured loft `blade_phasevi.py`: 26 stations, the
+   circle→S809 section rule, 25×60 = 3000 outward-wound wetted triangles (no
+   caps), a canonical binary STL and per-node `radial_station`/`chord_fraction`
+   metadata — no gmsh, no subprocess.
+3. Generalized `makeGeometry.py` into a builder registry (`nacelle` → gmsh,
+   `phaseVI_blade` → Python) with route-aware `generate`/`--check`; the retired
+   `blade0/1/2` names now return an explicit "retired in S2" error.
+4. Committed the blade STL/metadata (byte-identical regeneration), updated the
+   geometry README/PROVENANCE and added pure-Python data tests.
+
+---
+
+#### 16. Add the Phase VI ASM-mesh third variant
+
+**Files:**
+- `turbinesFoam/validation/phaseVI/config/case.yaml` (updated)
+- `turbinesFoam/validation/phaseVI/tools/generate_case.py` (updated)
+- `turbinesFoam/validation/phaseVI/tools/case_config.py` (updated)
+- `turbinesFoam/validation/phaseVI/tools/stage_blade_stl.py` (new)
+- `turbinesFoam/validation/phaseVI/case/system/fvOptions.ASM-MESH` (new)
+- `turbinesFoam/validation/phaseVI/scripts/runPhaseVI.sh` (updated)
+- `turbinesFoam/validation/phaseVI/scripts/comparePhaseVI.py` (updated)
+- `turbinesFoam/validation/phaseVI/scripts/slurm/asm-mesh.slurm` (new)
+- `turbinesFoam/tests/test_phasevi_case.py`, `tests/test_phasevi_compare.py` (updated),
+  `tests/test_blade_stage.py` (new)
+- `turbinesFoam/validation/phaseVI/README.md`, `README.md` (updated)
+
+**Problem:** The Phase VI package rendered only the ALM/ASM twins, the runner
+accepted only `alm|asm`, and the comparison merged two models. There was no way
+to prepare a mesh-backed ASM run, to stage the imported STL into a
+self-contained run directory, or to compare three models; the new array also
+risked being submitted.
+
+**Fix:**
+1. `generate_case.py` renders `fvOptions.ASM-MESH` (surface element keys plus
+   `surfaceGeometry`, and `kernel gaussian;` only for the ablation);
+   `case.yaml` gains the prepared `asm-mesh` stage and `--check` covers the
+   third twin.
+2. `case_config.py` accepts `asm-mesh`; `runPhaseVI.sh -m asm-mesh` prepares
+   `asm-mesh-U<speed>-<mesh>`, stages the committed STL through the sha256-gated
+   `stage_blade_stl.py` (exit 3 on mismatch/missing source) and refuses
+   `--submit` (exit 2) pointing at the prepared-only array.
+3. `comparePhaseVI.py --asm-mesh-dir` produces three-way turbine/spanwise
+   tables, converts the `bladeSurface` station output with the existing r/R
+   definition (no coefficient redefined), fails loudly on a missing third input,
+   and extends `LIMITATIONS` with the sub-grid caveat and the kernel/width
+   ablation.
+4. `scripts/slurm/asm-mesh.slurm` is a prepared-only 2-task array (D/32
+   measurement gate then D/48 headline, 48 ranks, ≤ 24 h, restartable), guarded
+   by `PHASEVI_LONG_QUEUE_AUTHORIZED=1`; no job is submitted by this change.
+5. Tests pin the three-twin diff, model selection, the stage matrix, the
+   committed twin, the staging helper and the three-way merge including the
+   real `bladeSurface` CSV schema.
+
+Reference: Yang, X. and Sotiropoulos, F., *A new class of actuator surface
+models for wind turbines*, arXiv:1702.02108v4 (2018), Sec. 2.1–2.2.
