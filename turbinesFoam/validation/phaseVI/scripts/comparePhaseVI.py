@@ -2,10 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compare NREL Phase VI simulation runs with the measured WDH data.
 
-Reads the turbine-level CSV and the element-level CSVs for one or both models
-(ALM/ASM), merges them with the committed experimental CSVs under
-`data/experiment/`, and writes turbine-level and spanwise simulation-versus-
-experiment tables plus `metrics.json` and `report.txt`.
+Reads the turbine-level CSV and the element-level CSVs for the ALM and ASM
+models and, for the mesh-backed ASM variant (`asm-mesh`, `--asm-mesh-dir`), the
+turbine-level CSV plus the per-station surface CSVs
+(`postProcessing/bladeSurface/*.csv`), merges them with the committed
+experimental CSVs under `data/experiment/`, and writes turbine-level and
+spanwise simulation-versus-experiment tables plus `metrics.json` and
+`report.txt`.
+
+The surface station rows already carry the element public `c_ref_n`/`c_ref_t`
+definitions, so the surface conversion only applies the element `root_dist` ->
+r/R mapping; no coefficient definition is redefined.
 
 Metric definitions (fixed against the NREL report before any result is
 claimed; F1):
@@ -39,6 +46,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -53,6 +61,7 @@ DEFAULT_CONFIG = ROOT / "config" / "case.yaml"
 
 TURBINE_CSV = Path("postProcessing") / "turbines" / "0" / "turbine.csv"
 ELEMENT_DIR = Path("postProcessing") / "actuatorLineElements" / "0"
+SURFACE_DIR = Path("postProcessing") / "bladeSurface"
 
 STATIONS = (0.30, 0.47, 0.63, 0.80, 0.95)
 TURBINE_BANDS = {"power": 0.15, "torque": 0.15, "thrust": 0.15}
@@ -75,6 +84,18 @@ LIMITATIONS = [
     "sub-cell, so the strip-wise force distribution is sub-grid: the "
     "comparison tests chord-averaged inflow and the load shift versus ALM, "
     "not a chord-resolved surface.",
+    "The imported blade surface (asm-mesh) is sub-grid at the affordable "
+    "meshes: background cells are 0.314/0.210/0.157 m (D/32..D/64) against a "
+    "0.218-0.744 m chord, so the three-way comparison tests the model form "
+    "(how the load is distributed), not resolved chordwise physics.",
+    "The surface kernel/width is a confound with the imported geometry: the "
+    "paper-cosine surface and the no-mesh Gaussian differ in kernel and width "
+    "as well as in geometry, so the kernel-matched ASM-mesh configuration "
+    "(`generate_case.py --surface-kernel gaussian`) is an ablation, not a "
+    "model.",
+    "The ASM-mesh variant is distribution-only: the element BEM chain, "
+    "chord-averaged inflow, dynamic stall and end effects are unchanged, and "
+    "the surface does not sample per-node inflow or recompute loads.",
     "URANS k-omega SST cannot capture deep-stall unsteadiness or hysteresis; "
     "the separated high-speed points (13-25 m/s) are trend and stall-onset "
     "evidence only.",
@@ -256,10 +277,19 @@ def read_elements(element_dir: Path):
     return elements
 
 
+def r_over_r_from_root_dist(root_dist, radius):
+    """Map the element blade-normalized root distance to r/R.
+
+    `root_dist` is 0 at the root cutout and 1 at the tip; the mapping is the
+    one the element profile has always used (`spanwise_profile`).
+    """
+    span = 1.0 - ROOT_CUTOUT_RADIUS / radius
+    return ROOT_CUTOUT_RADIUS / radius + root_dist * span
+
+
 def spanwise_profile(elements, start, end, allow_short, radius):
     """Time-mean c_ref_n/c_ref_t per element mapped to r/R."""
     profile = []
-    span = 1.0 - ROOT_CUTOUT_RADIUS / radius
     for path, rows in elements:
         window = [row for row in rows if start <= float(row["time"]) <= end]
         if not window:
@@ -269,10 +299,83 @@ def spanwise_profile(elements, start, end, allow_short, radius):
         root_dist = mean([float(row["root_dist"]) for row in window])
         c_ref_n = mean([float(row["c_ref_n"]) for row in window])
         c_ref_t = mean([float(row["c_ref_t"]) for row in window])
-        r_over_r = ROOT_CUTOUT_RADIUS / radius + root_dist * span
+        r_over_r = r_over_r_from_root_dist(root_dist, radius)
         profile.append((r_over_r, c_ref_n, c_ref_t))
     profile.sort()
     return profile
+
+
+def read_surface_stations(run_dir: Path, start, end, allow_short):
+    """Time-mean per-station c_ref_n/c_ref_t of an ASM-mesh run.
+
+    Reads the surface station CSVs (`postProcessing/bladeSurface/*.csv`, the
+    per-node `*_nodes.csv` output is not a station table), filters on the
+    averaging window like `spanwise_profile` and returns
+    `(root_dist, c_ref_n, c_ref_t)` tuples sorted by root distance. The rows
+    already carry the element public reference coefficients, so the caller only
+    applies the element r/R mapping. A missing surface directory or an empty
+    station table fails loudly.
+    """
+    surface_dir = run_dir / SURFACE_DIR
+    files = sorted(
+        path for path in surface_dir.glob("*.csv")
+        if path.is_file() and not path.name.endswith("_nodes.csv")
+    )
+    if not files:
+        raise FileNotFoundError(str(surface_dir / "*.csv"))
+    stations: dict[int, list[dict]] = {}
+    for path in files:
+        rows = read_rows(path)
+        if not rows:
+            raise MissingInput(f"{path}: no data rows")
+        window = [row for row in rows if start <= float(row["time"]) <= end]
+        if not window:
+            if not allow_short:
+                raise ShortWindow(f"{path}: no samples in the averaging window")
+            window = rows
+        for row in window:
+            stations.setdefault(int(float(row["station"])), []).append(row)
+    # The Phase VI twin writes station output for blade1 only (`writePerf false`
+    # on blade2), but merging any station files by station id keeps exactly one
+    # profile per station (identical values for symmetric blades) instead of
+    # double-counting the load.
+    profile = []
+    for station in sorted(stations):
+        rows = stations[station]
+        root_dist = mean([float(row["root_dist"]) for row in rows])
+        c_ref_n = mean([float(row["c_ref_n"]) for row in rows])
+        c_ref_t = mean([float(row["c_ref_t"]) for row in rows])
+        profile.append((root_dist, c_ref_n, c_ref_t))
+    profile.sort()
+    return profile
+
+
+def read_surface_audit(run_dir: Path) -> dict:
+    """Fair-comparison audit fields of an ASM-mesh run directory.
+
+    `run.json` (written by `runPhaseVI.sh`) records the staged surface STL
+    hash; `system/fvOptions` is the installed twin whose `kernel` key selects
+    the surface kernel (`cosine` is the default and is not rendered). Both are
+    best-effort: a synthetic directory without them reports null.
+    """
+    audit = {"staged_stl_sha256": None, "surface_kernel": None}
+    run_json = run_dir / "run.json"
+    if run_json.is_file():
+        try:
+            payload = json.loads(run_json.read_text(encoding="utf-8"))
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict):
+            audit["staged_stl_sha256"] = payload.get("staged_stl_sha256")
+    fv_options = run_dir / "system" / "fvOptions"
+    if fv_options.is_file():
+        match = re.search(
+            r"^\s*kernel\s+(\w+)\s*;",
+            fv_options.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        audit["surface_kernel"] = match.group(1) if match else "cosine"
+    return audit
 
 
 def interpolate(profile, x):
@@ -354,12 +457,13 @@ def span_limited_blade_thrust(elements, start, end, allow_short, radius):
 
 
 def analyse_model(run_dir: Path, cfg, speed, sequence, rho, allow_short,
-                  thrust_scope, match_span=False):
+                  thrust_scope, match_span=False, model=None):
+    surface = model == "asm-mesh"
     turbine_path = run_dir / TURBINE_CSV
     element_dir = run_dir / ELEMENT_DIR
     if not turbine_path.is_file():
         raise FileNotFoundError(str(turbine_path))
-    if not element_dir.is_dir():
+    if not surface and not element_dir.is_dir():
         raise FileNotFoundError(str(element_dir))
     start, end, period = window_bounds(cfg, speed, sequence)
     rows = read_rows(turbine_path)
@@ -370,13 +474,35 @@ def analyse_model(run_dir: Path, cfg, speed, sequence, rho, allow_short,
         rows, start, end, period, allow_short, float(entry["tsr"])
     )
     drift = drift_flags(rows, start, period)
-    elements = read_elements(element_dir)
     radius = float(cfg["turbine"]["radius"])
-    profile = spanwise_profile(elements, start, end, allow_short, radius)
+    if surface:
+        # The station rows carry the element c_ref_n/c_ref_t definitions; the
+        # only conversion is the element root_dist -> r/R mapping.
+        profile = [
+            (r_over_r_from_root_dist(root_dist, radius), c_ref_n, c_ref_t)
+            for root_dist, c_ref_n, c_ref_t in read_surface_stations(
+                run_dir, start, end, allow_short
+            )
+        ]
+        profile.sort()
+        # The element CSVs still exist (suppression stops only the strip
+        # projection) and back element_profiles/--match-eaeroth-span.
+        elements = read_elements(element_dir) if element_dir.is_dir() else []
+    else:
+        elements = read_elements(element_dir)
+        profile = spanwise_profile(elements, start, end, allow_short, radius)
     metrics = turbine_metrics(stats, rho, speed, cfg, thrust_scope)
     metrics["run_dir"] = str(run_dir)
     metrics["element_profiles"] = len(elements)
+    if surface:
+        metrics["surface_stations"] = len(profile)
+        metrics.update(read_surface_audit(run_dir))
     if match_span:
+        if not elements:
+            raise MissingInput(
+                f"{element_dir}: element CSVs are required for "
+                "--match-eaeroth-span"
+            )
         span_thrust, included, total = span_limited_blade_thrust(
             elements, start, end, allow_short, radius
         )
@@ -518,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--alm-dir", type=Path, default=None)
     parser.add_argument("--asm-dir", type=Path, default=None)
+    parser.add_argument("--asm-mesh-dir", type=Path, default=None,
+                        help="ASM-mesh run directory (imported surface variant)")
     parser.add_argument("--run-dir", type=Path, default=None,
                         help="single run directory labelled as the model name")
     parser.add_argument("--experiment", type=Path, default=DEFAULT_EXPERIMENT)
@@ -544,11 +672,13 @@ def main(argv: list[str] | None = None) -> int:
         directories["alm"] = args.alm_dir
     if args.asm_dir:
         directories["asm"] = args.asm_dir
+    if args.asm_mesh_dir:
+        directories["asm-mesh"] = args.asm_mesh_dir
     if args.run_dir:
         directories[args.run_dir.name] = args.run_dir
     if not directories:
-        return _exit("no run directory given (--alm-dir/--asm-dir/--run-dir)",
-                     EXIT_MISSING_INPUT)
+        return _exit("no run directory given (--alm-dir/--asm-dir/"
+                     "--asm-mesh-dir/--run-dir)", EXIT_MISSING_INPUT)
 
     out_dir = args.out if args.out is not None else (
         ROOT / "results" / f"U{args.speed:g}-{args.sequence}"
@@ -581,7 +711,7 @@ def main(argv: list[str] | None = None) -> int:
             results[model] = analyse_model(
                 directory.resolve(), cfg, args.speed, args.sequence, rho_value,
                 args.allow_short_window, args.thrust_scope,
-                match_span=args.match_eaeroth_span,
+                match_span=args.match_eaeroth_span, model=model,
             )
         except (FileNotFoundError, MissingInput) as exc:
             return _exit(f"missing input for {model}: {exc}", EXIT_MISSING_INPUT)
@@ -604,6 +734,27 @@ def main(argv: list[str] | None = None) -> int:
         out_dir / "spanwise_comparison.csv", results, experiment_spanwise
     )
 
+    definitions = {
+        "torque": "Q = ct * q_dyn * R with R = rotorRadius, "
+                  "q_dyn = 1/2 rho A Uinf^2",
+        "power": "P = cp * q_dyn * Uinf with cp = ct * TSR, "
+                 "A = pi R^2",
+        "thrust_blade": "T_blade = sum_blades cd_blade * q_dyn (blade-only)",
+        "thrust_rotor": "T_rotor = cd * q_dyn (hub included; secondary)",
+        "spanwise": "time-mean c_ref_n/c_ref_t interpolated to "
+                    "30/47/63/80/95 % span",
+        "density": "rho = WTBARO / (287.058 * (WTATEMP + 273.15))",
+    }
+    if "asm-mesh" in results:
+        # Recorded only when a surface model is actually compared, so an
+        # ALM/ASM-only metrics.json keeps its delivered definition block.
+        definitions["surface_conversion"] = (
+            "asm-mesh spanwise rows come from "
+            "postProcessing/bladeSurface/*.csv and keep the element "
+            "c_ref_n/c_ref_t definitions with the element root_dist -> r/R "
+            "mapping"
+        )
+
     metrics = {
         "case": {
             "speed_m_s": args.speed,
@@ -619,17 +770,7 @@ def main(argv: list[str] | None = None) -> int:
             "thrust_scope": args.thrust_scope,
             "match_eaeroth_span": args.match_eaeroth_span,
         },
-        "definitions": {
-            "torque": "Q = ct * q_dyn * R with R = rotorRadius, "
-                      "q_dyn = 1/2 rho A Uinf^2",
-            "power": "P = cp * q_dyn * Uinf with cp = ct * TSR, "
-                     "A = pi R^2",
-            "thrust_blade": "T_blade = sum_blades cd_blade * q_dyn (blade-only)",
-            "thrust_rotor": "T_rotor = cd * q_dyn (hub included; secondary)",
-            "spanwise": "time-mean c_ref_n/c_ref_t interpolated to "
-                        "30/47/63/80/95 % span",
-            "density": "rho = WTBARO / (287.058 * (WTATEMP + 273.15))",
-        },
+        "definitions": definitions,
         "bands": {
             "turbine_relative": TURBINE_BANDS,
             "spanwise": "max(0.15, 20 % of measured)",
