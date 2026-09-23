@@ -40,6 +40,10 @@ SCAFFOLD_DELTA_T = 0.03
 # overrides and the fixed time step.
 SOLVER_CHOICES = ("urans", "iddes")
 
+# Model variants: the actuator line, the no-mesh actuator surface and the
+# mesh-backed actuator surface (ASM over the imported blade STL).
+MODEL_CHOICES = ("alm", "asm", "asm-mesh")
+
 # Blade root cutout station; everything inboard of it is modelled as cylinder.
 ROOT_CUTOUT_RADIUS = 0.5083
 ROOT_CYLINDER_END = 1.2575
@@ -582,8 +586,11 @@ def _main(argv: list[str] | None = None) -> int:
                 speed, mesh, model, sequence = args.select
             else:
                 raise KeyError("--select takes SPEED MESH MODEL [SEQUENCE]")
-            if model not in ("alm", "asm"):
-                raise KeyError(f"unsupported model {model!r}; choose alm or asm")
+            if model not in MODEL_CHOICES:
+                raise KeyError(
+                    f"unsupported model {model!r}; choose from "
+                    f"{list(MODEL_CHOICES)}"
+                )
             values = kinematics(cfg, speed, mesh, sequence, args.solver)
             print(json.dumps({"model": model, **values}, indent=2, sort_keys=True))
         elif args.target_cells:

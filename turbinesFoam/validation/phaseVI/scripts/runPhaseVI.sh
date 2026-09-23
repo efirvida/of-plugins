@@ -3,7 +3,7 @@
 # Prepare (and optionally run or submit) one Phase VI run variant.
 #
 # Usage:
-#   runPhaseVI.sh -m alm|asm -u <wind-speed> [-mesh coarse|fine|ultra]
+#   runPhaseVI.sh -m alm|asm|asm-mesh -u <wind-speed> [-mesh coarse|fine|ultra]
 #                 [--domain long|squat] [-s H|S] [--solver urans|iddes]
 #                 [--nchordwise N] [--ranks N] [--stage0] [--restart]
 #                 [--run] [--submit]
@@ -14,10 +14,17 @@
 # case/ skeleton is never modified), the matching fvOptions twin is installed
 # as system/fvOptions, the shared mesh is hardlinked in and run.json is written.
 #
+# -m asm-mesh installs the fvOptions.ASM-MESH twin and stages the committed
+# blade STL into constant/triSurface/ through tools/stage_blade_stl.py, which
+# checks it against the geometry metadata sha256 and aborts (exit 3) on a
+# mismatch. Its --submit is refused (exit 2): the prepared array
+# scripts/slurm/asm-mesh.slurm is prepared-only and no ASM-mesh job may be
+# submitted by this change.
+#
 # --solver iddes renders the Stage 3 LES kOmegaSSTIDDES variant (fixed 0.0025 s
 # step) and appends -iddes to the run id. --nchordwise N overrides the ASM
-# chordwise strip count (ASM only; appends -ncN) and --ranks N overrides the
-# configured decomposition (rendered into decomposeParDict and used for
+# chordwise strip count (ASM family only; appends -ncN) and --ranks N overrides
+# the configured decomposition (rendered into decomposeParDict and used for
 # mpirun); inside a Slurm allocation --ranks must match SLURM_NTASKS.
 #
 # --stage0 caps the run at 0.25 revolutions (spec bound 0.3) for the authorized
@@ -28,7 +35,7 @@
 # Exit codes:
 #   2  unsupported input (model, speed, mesh, domain, sequence, flag
 #      combination or a --ranks value that differs from SLURM_NTASKS)
-#   3  environment, blockMesh/checkMesh or solver failure
+#   3  environment, blockMesh/checkMesh, solver or STL staging failure
 #   4  generated case stale
 #   5  long-queue authorization gate (PHASEVI_LONG_QUEUE_AUTHORIZED=1 required)
 set -eu
@@ -37,7 +44,7 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/.." && pwd)
 
 usage() {
-    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 model=""
@@ -73,12 +80,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$model" ] || [ -z "$speed" ]; then
-    echo "ERROR: -m alm|asm and -u <wind-speed> are required" >&2
+    echo "ERROR: -m alm|asm|asm-mesh and -u <wind-speed> are required" >&2
     usage >&2
     exit 2
 fi
 case "$model" in
-    alm|asm) ;;
+    alm|asm|asm-mesh) ;;
     *) echo "ERROR: unsupported model: $model" >&2; exit 2 ;;
 esac
 case "$mesh" in
@@ -100,7 +107,7 @@ case "$solver" in
 esac
 if [ -n "$nchordwise" ]; then
     if [ "$model" = "alm" ]; then
-        echo "ERROR: --nchordwise is ASM-only (-m asm)" >&2
+        echo "ERROR: --nchordwise is ASM-family-only (-m asm or -m asm-mesh)" >&2
         exit 2
     fi
     case "$nchordwise" in
@@ -125,6 +132,12 @@ if [ "$submit" -eq 1 ] && { [ "$solver" = "iddes" ] || [ -n "$nchordwise" ] \
     echo "ERROR: --submit cannot carry --solver iddes, --nchordwise or --ranks;" >&2
     echo "  Stage 3 is submitted through its prepared arrays:" >&2
     echo "  scripts/slurm/stage3.slurm and scripts/slurm/stage3-d64.slurm." >&2
+    exit 2
+fi
+if [ "$submit" -eq 1 ] && [ "$model" = "asm-mesh" ]; then
+    echo "ERROR: --submit is not available for -m asm-mesh;" >&2
+    echo "  the ASM-mesh runs are prepared through scripts/slurm/asm-mesh.slurm," >&2
+    echo "  which is prepared-only and must not be submitted by this change." >&2
     exit 2
 fi
 
@@ -211,9 +224,25 @@ cp -r "$run_dir/0.org" "$run_dir/0"
 case "$model" in
     alm) twin="fvOptions.ALM" ;;
     asm) twin="fvOptions.ASM" ;;
+    asm-mesh) twin="fvOptions.ASM-MESH" ;;
 esac
 cp "$run_dir/system/$twin" "$run_dir/system/fvOptions"
 echo "Installed $twin as system/fvOptions"
+
+# The ASM-mesh twin references the imported surface case-relatively; stage the
+# committed STL (sha256-checked against the geometry metadata) so the run
+# directory is self-contained for restarts and relocation.
+staged_stl_sha256=""
+if [ "$model" = "asm-mesh" ]; then
+    stl_src="$root/../../geometry/stl/phaseVI_blade.stl"
+    meta="$root/../../geometry/metadata/phaseVI_blade.json"
+    if ! staged_stl_sha256=$(python3 "$root/tools/stage_blade_stl.py" \
+            --run-dir "$run_dir" --stl "$stl_src" --metadata "$meta"); then
+        echo "ERROR: failed to stage the blade STL into $run_dir" >&2
+        exit 3
+    fi
+    echo "Staged blade STL sha256 $staged_stl_sha256"
+fi
 
 mesh_dir="$root/runs/mesh-$mesh"
 if [ "$domain" = "squat" ]; then
@@ -228,7 +257,7 @@ cp -al "$mesh_dir/constant/polyMesh" "$run_dir/constant/polyMesh"
 echo "Linked shared $mesh mesh from $mesh_dir"
 
 python3 - "$run_dir" "$root" "$model" "$speed_token" "$mesh" "$domain" "$sequence" \
-    "$stage0" "$solver" "$nchordwise" "$ranks" <<'PY'
+    "$stage0" "$solver" "$nchordwise" "$ranks" "$staged_stl_sha256" <<'PY'
 import datetime
 import hashlib
 import json
@@ -248,7 +277,8 @@ from pathlib import Path
     solver,
     nchordwise,
     ranks,
-) = sys.argv[1:12]
+    staged_stl_sha256,
+) = sys.argv[1:13]
 run_dir = Path(run_dir)
 root = Path(root)
 
@@ -280,6 +310,10 @@ payload = {
     "run_dir": str(run_dir),
     "start_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
 }
+if model == "asm-mesh":
+    # Fair-comparison input hash of the staged surface (W3.2); the comparison
+    # records it in metrics.json (W3.3).
+    payload["staged_stl_sha256"] = staged_stl_sha256
 (run_dir / "run.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 print(f"Wrote {run_dir / 'run.json'}")
 PY
