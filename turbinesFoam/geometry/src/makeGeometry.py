@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Generate the nacelle/hub surface (binary STL + metadata JSON) for the ASM.
+"""Generate the committed turbine geometry components (binary STL + metadata).
 
-The geometry is described by the committed gmsh source `src/nacelle.geo`
+The component registry (`BUILDERS`) selects the generation route: the `nacelle`
+is meshed by the pinned gmsh version from the committed `src/nacelle.geo`
 (hemisphere + cylinder, Yang & Sotiropoulos, arXiv:1702.02108v4 Sec. 4.1 and
-Fig. 3) and is meshed by the pinned gmsh version with fixed options, so that
-regeneration from the committed inputs is byte-identical.
+Fig. 3), the `phaseVI_blade` is built by the pure-Python structured loft
+registered in `src/blade_phasevi.py` (committed Phase VI stations + S809
+coordinates, no gmsh).  Both routes are deterministic, so regeneration from the
+committed inputs is byte-identical.
 
 Usage:
-    makeGeometry.py                        # generate the nacelle STL + metadata
+    makeGeometry.py                        # generate the default component
     makeGeometry.py --check                # regenerate and compare; never writes
-    makeGeometry.py --component nacelle    # explicit component (S1: nacelle only)
+    makeGeometry.py --component nacelle    # gmsh component (pinned gmsh)
+    makeGeometry.py --component phaseVI_blade   # Python component (no gmsh)
     makeGeometry.py --gmsh /path/to/gmsh   # explicit gmsh executable
 
 `--check` regenerates the component into a temporary directory, byte-compares
@@ -20,7 +24,7 @@ PROVENANCE.md records their sha256 values.  It never modifies the tree.
 Exit codes:
     0   success (generated, or `--check` found no stale artefact)
     1   generation failure, or `--check` found a stale/missing artefact
-    2   gmsh is missing, not runnable, or not the pinned version (`--check`)
+    2   gmsh is missing, not runnable, or not the pinned version (gmsh route)
 
 The two sha256 values that PROVENANCE.md must record are printed by every run.
 """
@@ -45,27 +49,58 @@ STL_DIR = ROOT / "stl"
 METADATA_DIR = ROOT / "metadata"
 PROVENANCE = ROOT / "PROVENANCE.md"
 
-#: gmsh version the committed artefacts were generated with (PROVENANCE.md).
+#: gmsh version the committed nacelle artefacts were generated with
+#: (PROVENANCE.md).
 GMSH_VERSION = "4.15.2"
 #: metadata schema version.
 FORMAT_VERSION = 1
 #: STL units, documented in the metadata.
 UNITS = "m"
-#: fixed 80-byte binary STL header (no gmsh version: the geometry is what is
-#: committed, and the version is recorded in the metadata).
-STL_HEADER = "turbinesFoam geometry pipeline - nacelle (hemisphere + 6R cylinder)"
+#: fixed 80-byte binary STL header per component (no gmsh version: the geometry
+#: is what is committed, and the version is recorded in the metadata).  The
+#: nacelle header bytes are unchanged since S1; the Python builder module
+#: carries the same string for its component (`blade_phasevi.STL_HEADER`).
+STL_HEADERS = {
+    "nacelle": "turbinesFoam geometry pipeline - nacelle (hemisphere + 6R cylinder)",
+    "phaseVI_blade": "turbinesFoam geometry pipeline - phaseVI_blade (S809, wetted)",
+}
 
 
 class GenerationError(Exception):
     """A component could not be generated from the committed inputs."""
 
 
+#: Builder routes (the values of `BUILDERS`): `gmsh` meshes the committed
+#: `src/<name>.geo` with the pinned gmsh; `python` calls the in-process builder
+#: module `src/<name>.py` (pure Python, no gmsh, no subprocess).
+GMSH_BUILDER = "gmsh"
+PYTHON_BUILDER = "python"
+
+#: Component registry (design D12): the generation route per component.
+BUILDERS = {
+    "nacelle": GMSH_BUILDER,
+    "phaseVI_blade": PYTHON_BUILDER,
+}
+#: Components the pipeline generates (derived from the registry).
+COMPONENTS = tuple(BUILDERS)
+#: Components the layout reserves for a later change; empty since S2 (the blade
+#: is generated here, and a future MEXICO blade is a separate `mexico_blade`
+#: component owned by the `mexico-validation` change).
+RESERVED_COMPONENTS = ()
+#: Retired component names: S2 replaced the `blade0/1/2` reservation with the
+#: single rotor-qualified `phaseVI_blade` component (one STL serves both
+#: identical Phase VI blades).  They are never generated; the CLI keeps a
+#: helpful error pointing at the current component name.
+RETIRED_COMPONENTS = ("blade0", "blade1", "blade2")
+
+
 @dataclass(frozen=True)
 class Component:
-    """One generated surface: its gmsh source, STL and metadata paths."""
+    """One generated surface: its builder route, inputs and output paths."""
 
     name: str
-    geo: Path
+    builder: str
+    geo: Path | None
     stl: Path
     metadata: Path
 
@@ -74,18 +109,15 @@ class Component:
 
 
 def component(name: str) -> Component:
+    builder = BUILDERS[name]
     return Component(
         name=name,
-        geo=SRC / f"{name}.geo",
+        builder=builder,
+        geo=SRC / f"{name}.geo" if builder == GMSH_BUILDER else None,
         stl=STL_DIR / f"{name}.stl",
         metadata=METADATA_DIR / f"{name}.json",
     )
 
-
-#: Components generated in S1.
-COMPONENTS = ("nacelle",)
-#: Components the layout reserves for S2 (blade surface model); not generated.
-RESERVED_COMPONENTS = ("blade0", "blade1", "blade2")
 
 #: `name = <number>;` declarations in the .geo that carry the canonical
 #: geometry parameters (derived expressions such as `L = cylinderRatio*R;` do
@@ -316,8 +348,10 @@ def render_metadata(metadata: dict) -> str:
 # --------------------------------------------------------------------------
 # generation
 # --------------------------------------------------------------------------
-def build_component(target: Component, gmsh: str, version: str) -> tuple[str, str]:
-    """Generate `target` into the tree; return `(metadata text, summary text)`."""
+def build_gmsh_component(
+    target: Component, gmsh: str, version: str
+) -> tuple[str, str]:
+    """Generate a gmsh component into the tree; return `(metadata text, summary)`."""
     geo_bytes = target.geo.read_bytes()
     parameters = geo_parameters(geo_bytes.decode("utf-8"))
     if not parameters:
@@ -349,7 +383,7 @@ def build_component(target: Component, gmsh: str, version: str) -> tuple[str, st
                     f"{target.geo}: triangle {index} has an inconsistent normal"
                 )
         canonical = canonical_triangles(triangles)
-        write_binary_stl(generated_stl, canonical, STL_HEADER)
+        write_binary_stl(generated_stl, canonical, STL_HEADERS[target.name])
 
         stl_bytes = generated_stl.read_bytes()
         metadata = {
@@ -388,6 +422,26 @@ def build_component(target: Component, gmsh: str, version: str) -> tuple[str, st
     return text, summary
 
 
+def build_blade_component(target: Component) -> tuple[str, str]:
+    """Generate a pure-Python component; return `(metadata text, summary)`.
+
+    The builder module is imported lazily: it reuses the canonical writer and
+    the metadata helpers of this module.  No gmsh lookup or subprocess runs on
+    this route.
+    """
+    from blade_phasevi import STL_HEADER, build as build_blade
+
+    if STL_HEADER != STL_HEADERS[target.name]:
+        raise GenerationError(
+            f"{target.name}: the builder header {STL_HEADER!r} differs from the "
+            f"registered header {STL_HEADERS[target.name]!r}"
+        )
+    try:
+        return build_blade(target.stl, target.metadata)
+    except (OSError, ValueError) as exc:
+        raise GenerationError(f"{target.name}: {exc}") from exc
+
+
 def _gmsh_hint() -> None:
     print(
         "hint: the pinned gmsh (pip package, PROVENANCE.md) needs a runnable "
@@ -396,28 +450,32 @@ def _gmsh_hint() -> None:
     )
 
 
-def generate(component_name: str, gmsh: str) -> int:
-    version, reason = gmsh_version(gmsh)
-    if version is None:
-        print(f"error: {reason}", file=sys.stderr)
-        _gmsh_hint()
-        return 2
-    if version != GMSH_VERSION:
-        print(
-            f"warning: gmsh {version} differs from the pinned {GMSH_VERSION} "
-            f"(PROVENANCE.md)",
-            file=sys.stderr,
-        )
-
+def generate(component_name: str, gmsh: str | None) -> int:
     target = component(component_name)
+    version = None
+    if target.builder == GMSH_BUILDER:
+        version, reason = gmsh_version(gmsh)
+        if version is None:
+            print(f"error: {reason}", file=sys.stderr)
+            _gmsh_hint()
+            return 2
+        if version != GMSH_VERSION:
+            print(
+                f"warning: gmsh {version} differs from the pinned {GMSH_VERSION} "
+                f"(PROVENANCE.md)",
+                file=sys.stderr,
+            )
+
     try:
-        _, summary = build_component(target, gmsh, version)
+        if target.builder == GMSH_BUILDER:
+            rendered, summary = build_gmsh_component(target, gmsh, version)
+        else:
+            rendered, summary = build_blade_component(target)
     except GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    parameters = geo_parameters(target.geo.read_text(encoding="utf-8"))
-    input_digest = input_sha256(target.geo.read_bytes(), parameters)
+    input_digest = json.loads(rendered)["input_sha256"]
     print(summary)
     print(f"wrote {target.stl.relative_to(ROOT)}")
     print(f"wrote {target.metadata.relative_to(ROOT)}")
@@ -427,40 +485,43 @@ def generate(component_name: str, gmsh: str) -> int:
     return 0
 
 
-def check(component_name: str, gmsh: str) -> int:
-    version, reason = gmsh_version(gmsh)
-    if version is None:
-        print(f"error: {reason}", file=sys.stderr)
-        _gmsh_hint()
-        return 2
-    if version != GMSH_VERSION:
-        print(
-            f"error: gmsh {version} is not the pinned {GMSH_VERSION} "
-            "(PROVENANCE.md); cannot verify deterministic regeneration",
-            file=sys.stderr,
-        )
-        return 2
-
+def check(component_name: str, gmsh: str | None) -> int:
     target = component(component_name)
-    problems: list[str] = []
+    version = None
+    if target.builder == GMSH_BUILDER:
+        version, reason = gmsh_version(gmsh)
+        if version is None:
+            print(f"error: {reason}", file=sys.stderr)
+            _gmsh_hint()
+            return 2
+        if version != GMSH_VERSION:
+            print(
+                f"error: gmsh {version} is not the pinned {GMSH_VERSION} "
+                "(PROVENANCE.md); cannot verify deterministic regeneration",
+                file=sys.stderr,
+            )
+            return 2
 
-    geo_text = target.geo.read_text(encoding="utf-8")
-    geo_bytes = target.geo.read_bytes()
-    parameters = geo_parameters(geo_text)
-    expected_input_sha256 = input_sha256(geo_bytes, parameters)
+    problems: list[str] = []
 
     with tempfile.TemporaryDirectory(prefix="makeGeometry-check-") as temp_dir:
         candidate = Component(
             name=target.name,
+            builder=target.builder,
             geo=target.geo,
             stl=Path(temp_dir) / target.stl.name,
             metadata=Path(temp_dir) / target.metadata.name,
         )
         try:
-            rendered, _ = build_component(candidate, gmsh, version)
+            if target.builder == GMSH_BUILDER:
+                rendered, _ = build_gmsh_component(candidate, gmsh, version)
+            else:
+                rendered, _ = build_blade_component(candidate)
         except GenerationError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+
+        expected_input_sha256 = json.loads(rendered)["input_sha256"]
 
         if not target.stl.exists():
             problems.append(f"missing STL: {target.stl.relative_to(ROOT)}")
@@ -522,38 +583,41 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--component",
         default="nacelle",
-        help="component to build; S1 provides 'nacelle' "
-        f"(S2 reserves {', '.join(RESERVED_COMPONENTS)})",
+        help="component to build (available: " + ", ".join(COMPONENTS) + ")",
     )
     parser.add_argument(
         "--gmsh",
         default=None,
-        help="gmsh executable (default: the first `gmsh` found on PATH)",
+        help="gmsh executable (default: the first `gmsh` found on PATH); "
+        "gmsh-route components only",
     )
     args = parser.parse_args(argv)
 
-    if args.component in RESERVED_COMPONENTS:
+    if args.component in RETIRED_COMPONENTS:
         print(
-            f"error: component '{args.component}' is deferred to S2 (blade surface "
-            "model); S1 generates only: " + ", ".join(COMPONENTS),
+            f"error: component '{args.component}' was retired in S2; the blade "
+            "surface component is 'phaseVI_blade' "
+            f"(available: {', '.join(COMPONENTS)})",
             file=sys.stderr,
         )
         return 1
     if args.component not in COMPONENTS:
         parser.error(
             f"unknown component '{args.component}' "
-            f"(available: {', '.join(COMPONENTS)}; "
-            f"deferred: {', '.join(RESERVED_COMPONENTS)})"
+            f"(available: {', '.join(COMPONENTS)})"
         )
 
-    gmsh = args.gmsh or shutil.which("gmsh")
-    if not gmsh:
-        print(
-            "error: no gmsh executable found; pass --gmsh PATH (pinned "
-            f"{GMSH_VERSION}, see PROVENANCE.md)",
-            file=sys.stderr,
-        )
-        return 2
+    target = component(args.component)
+    gmsh = None
+    if target.builder == GMSH_BUILDER:
+        gmsh = args.gmsh or shutil.which("gmsh")
+        if not gmsh:
+            print(
+                "error: no gmsh executable found; pass --gmsh PATH (pinned "
+                f"{GMSH_VERSION}, see PROVENANCE.md)",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.check:
         return check(args.component, gmsh)
