@@ -1,0 +1,69 @@
+# Source: Somers, NREL/SR-440-6918, "Table 2. S809 Airfoil Coordinates" (PDF page index 19).
+# Extracted with PyMuPDF 1.27.2.3 on 2026-09-23 from s809_somers_nlr.pdf
+#   (sha256 a7496aad5680d9d4001e36cf8b13d9603ea31956093cded60976dd8fcaffeeb3, not committed).
+# Recipe: page text -> numeric tokens -?(?:\d+\.\d+|\.\d+) -> row grouping
+#   (upper x/c, upper z/c, lower x/c, lower z/c); the final printed row is the
+#   shared trailing edge (1.0000, 0.0000) completing the upper surface.
+# Values at the published precision (5 decimals).
+surface,x_over_c,z_over_c
+upper,0.00037,0.00275
+upper,0.00575,0.01166
+upper,0.01626,0.02133
+upper,0.03158,0.03136
+upper,0.05147,0.04143
+upper,0.07568,0.05132
+upper,0.10390,0.06082
+upper,0.13580,0.06972
+upper,0.17103,0.07786
+upper,0.20920,0.08505
+upper,0.24987,0.09113
+upper,0.29259,0.09594
+upper,0.33689,0.09933
+upper,0.38223,0.10109
+upper,0.42809,0.10101
+upper,0.47384,0.09843
+upper,0.52005,0.09237
+upper,0.56801,0.08356
+upper,0.61747,0.07379
+upper,0.66718,0.06403
+upper,0.71606,0.05462
+upper,0.76314,0.04578
+upper,0.80756,0.03761
+upper,0.84854,0.03017
+upper,0.88537,0.02335
+upper,0.91763,0.01694
+upper,0.94523,0.01101
+upper,0.96799,0.00600
+upper,0.98528,0.00245
+upper,0.99623,0.00054
+upper,1.00000,0.00000
+lower,0.00140,-0.00498
+lower,0.00933,-0.01272
+lower,0.02321,-0.02162
+lower,0.04223,-0.03144
+lower,0.06579,-0.04199
+lower,0.09325,-0.05301
+lower,0.12397,-0.06408
+lower,0.15752,-0.07467
+lower,0.19362,-0.08447
+lower,0.23175,-0.09326
+lower,0.27129,-0.10060
+lower,0.31188,-0.10589
+lower,0.35328,-0.10866
+lower,0.39541,-0.10842
+lower,0.43832,-0.10484
+lower,0.48234,-0.09756
+lower,0.52837,-0.08697
+lower,0.57663,-0.07442
+lower,0.62649,-0.06112
+lower,0.67710,-0.04792
+lower,0.72752,-0.03558
+lower,0.77668,-0.02466
+lower,0.82348,-0.01559
+lower,0.86677,-0.00859
+lower,0.90545,-0.00370
+lower,0.93852,-0.00075
+lower,0.96509,0.00054
+lower,0.98446,0.00065
+lower,0.99612,0.00024
+lower,1.00000,0.00000
