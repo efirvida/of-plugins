@@ -10,12 +10,30 @@
 # PHASEVI_LONG_QUEUE_AUTHORIZED=1 and is never submitted by this change.
 # runPhaseVI.sh --submit refuses -m asm-mesh and points here.
 #
-# Gate procedure (design section 6.5): the D/32 task (task 0) must be executed
+# Gate procedure (design sections 6.5 and 8.4): task 0 (asm-mesh:7:coarse:H,
+# the D/32 mesh) is the performance measurement gate. It must be executed only
 # under explicit authorization and its per-addSup instrumentation reviewed
-# BEFORE any D/48 submission. The D/32 task fits in one 24 h allocation; the
-# D/48 headline task may need several `--restart` requeues. The existing
-# phaseVI-prod, phaseVI-stage3 and phaseVI-stage3-d64 arrays are read-only
-# baselines: not submitted, cancelled or modified.
+# BEFORE any D/48 preparation or submission. The instrumentation is emitted by
+# bladeSurfaceSource: one Info line per distribute() on the master rank and the
+# per-call rows in postProcessing/bladeSurface/<owner>.surface_distribution.csv
+# (time,nodes,candidates,mean_candidates,max_candidates,seconds); it reports
+# the surface node count, the bounded candidate entries visited and the wall
+# seconds per addSup. The gate decision must be recorded, choosing one of:
+#   1. proceed   - the measured per-step cost is within the practical budget;
+#   2. harden    - the measured cost exceeds the budget: harden the candidate
+#                  query (W4.4, mesh-tree/stencil) and re-measure task 0;
+#   3. restrict  - keep the campaign scope (mesh/speed ladder) that the user
+#                  authorizes; the scope choice stays with the user
+#                  (design section 14 Q2).
+# The D/32 task fits in one 24 h allocation; the D/48 headline task may need
+# several `--restart` requeues. The measurement is a performance gate only:
+# the sub-grid caveat and the kernel/width confound framing are unchanged.
+# The existing phaseVI-prod, phaseVI-stage3 and phaseVI-stage3-d64 arrays are
+# read-only baselines: not submitted, cancelled or modified.
+#
+# PREPARED ONLY: this file must NOT be submitted by this change. The D/32
+# measurement is prepared here and executed only under explicit authorization;
+# no automated step of this change calls sbatch.
 #
 # Submit from the validation package directory (the package is resolved from
 # $SLURM_SUBMIT_DIR because Slurm runs a spooled copy of this script):

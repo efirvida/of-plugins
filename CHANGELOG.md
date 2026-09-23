@@ -911,3 +911,47 @@ risked being submitted.
 
 Reference: Yang, X. and Sotiropoulos, F., *A new class of actuator surface
 models for wind turbines*, arXiv:1702.02108v4 (2018), Sec. 2.1–2.2.
+
+---
+
+#### 17. Instrument the blade surface distribution and prepare the D/32 measurement gate
+
+**Files:**
+- `turbinesFoam/src/fvOptions/bladeSurface/bladeSurfaceSource.{H,C}` (updated)
+- `turbinesFoam/tests/test_blade_surface.py` (updated)
+- `turbinesFoam/README.md` (updated)
+- `turbinesFoam/validation/phaseVI/scripts/slurm/asm-mesh.slurm` (updated)
+- `turbinesFoam/validation/phaseVI/README.md` (updated)
+
+**Problem:** The bounded candidate query shipped in W1, but nothing reported
+its cost: there was no per-`addSup` node/candidate/second measurement, so the
+prepared D/32 ASM-mesh run could not be used as a performance gate before the
+D/48 campaign, and the spec's "Measurement output present" scenario had no
+executable oracle.
+
+**Fix:**
+1. `bladeSurfaceSource` gains per-`addSup` instrumentation (D6): it counts the
+   surface nodes, the candidate entries visited (per-rank sum and maximum,
+   reduced across ranks) and the wall seconds, emits one `Info` line on the
+   master rank and appends one row to
+   `postProcessing/bladeSurface/<owner>.surface_distribution.csv`
+   (`time,nodes,candidates,mean_candidates,max_candidates,seconds`) when
+   `logDistribution` (default `true`). The counters are observational: the
+   distribution result is unchanged and the candidate count is far below the
+   naive `nodes * N_local cells` scan.
+2. `tests/test_blade_surface.py::test_instrumentation_line` pins the line
+   format and CSV schema, asserts the candidate count is far below the full
+   local-cell scan, and re-checks that the instrumented run still satisfies the
+   partition-of-unity total. The existing W1 partition-of-unity and MPI tests
+   now run instrumented unchanged.
+3. The prepared-only `asm-mesh.slurm` header and the Phase VI README document
+   the D/32 performance measurement gate and its decision procedure
+   (proceed / harden the query / restrict the campaign), with the measurement
+   executed only under explicit authorization. The array is never submitted by
+   this change; the sub-grid caveat and the kernel/width confound framing are
+   unchanged.
+4. The conditional candidate-query hardening (W4.4) is not triggered: there is
+   no measurement evidence yet, so it stays open and conditional.
+
+Reference: Yang, X. and Sotiropoulos, F., *A new class of actuator surface
+models for wind turbines*, arXiv:1702.02108v4 (2018), Sec. 2.1–2.2.

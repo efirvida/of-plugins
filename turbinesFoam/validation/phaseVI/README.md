@@ -227,6 +227,42 @@ any D/48 preparation, and no automated step of this change submits it. The
 queued `phaseVI-prod`, `phaseVI-stage3` and `phaseVI-stage3-d64` arrays are
 read-only baselines.
 
+#### D/32 performance measurement gate (prepared, not run)
+
+The measurement is **prepared but not executed** by this change: it runs only
+under explicit authorization, and no `sbatch` is issued here. When authorized,
+task 0 is submitted alone and its output is reviewed before any D/48 job is
+prepared.
+
+The per-`addSup` instrumentation added by W4 (`logDistribution`, default
+`true`) is the measurement source: the master rank prints one line per
+`distribute()`,
+
+```
+Blade surface distribution 'turbine.blade1.surface': nodes <N>, candidates <C>,
+mean <C/N>, max <max>, seconds <s>
+```
+
+and appends the matching row to
+`postProcessing/bladeSurface/<owner>.surface_distribution.csv`
+(`time,nodes,candidates,mean_candidates,max_candidates,seconds`). `candidates`
+is the number of candidate cell entries visited in the call — the bounded-query
+evidence, far below the naive `nodes × N_local cells` scan — and `seconds` is
+the `addSup` wall time. The counters are observational only: the distributed
+load is unchanged.
+
+**Gate decision procedure** (recorded before any D/48 preparation):
+
+| Outcome | When | Action |
+|---|---|---|
+| **proceed** | the measured per-step cost is within the practical budget | keep the prepared D/48 task; no code change |
+| **harden** | the measured cost exceeds the budget | harden the candidate query (W4.4: mesh-tree/stencil) and re-measure task 0 |
+| **restrict** | the campaign scope must shrink | restrict the authorized mesh/speed ladder; the scope choice stays with the user |
+
+The gate is a **performance** gate only. The sub-grid caveat stands (D/32 cells
+0.314 m vs chord 0.218–0.744 m; no resolved chordwise-physics claim) and the
+kernel/width confound framing is unchanged.
+
 ## Model variants and formulation
 
 Three `fvOptions` twins are rendered from the same configuration and differ
