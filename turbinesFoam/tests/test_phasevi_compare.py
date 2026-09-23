@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -35,11 +36,33 @@ ELEMENT_COLUMNS = [
     "alpha_geom_deg", "cl", "cd", "fx", "fy", "fz", "end_effect_factor",
     "c_ref_t", "c_ref_n", "f_ref_t", "f_ref_n",
 ]
+#: The real `bladeSurface` CSV schemas written by
+#: `src/fvOptions/bladeSurface/bladeSurfaceSource.C` (station table at
+#: `:61-63`, opt-in node table at `:70-72`). The three-way fixture below must
+#: use these exact columns; `test_surface_csv_schema_matches_writer` pins the
+#: constants against the writer source so a schema drift cannot silently
+#: invalidate the comparison contract.
+SURFACE_STATION_COLUMNS = [
+    "time", "station", "root_dist", "area", "force_x", "force_y", "force_z",
+    "c_ref_n", "c_ref_t", "f_ref_n", "f_ref_t",
+]
+SURFACE_NODE_COLUMNS = [
+    "time", "node", "x", "y", "z", "nx", "ny", "nz", "fx", "fy", "fz",
+    "area", "station", "chord_fraction",
+]
+SURFACE_STATION_NAME = "turbine.blade1.surface.csv"
+SURFACE_NODES_NAME = "turbine.blade1.surface_nodes.csv"
 
 
 def write_run(root: Path, sign: float = 1.0, tsr: float = TSR,
-              steps: int = 4, elements: int = 3) -> Path:
-    """Write a synthetic run directory (placeholder values, not results)."""
+              steps: int = 4, elements: int = 3,
+              surface_stations: int = 0) -> Path:
+    """Write a synthetic run directory (placeholder values, not results).
+
+    `surface_stations > 0` additionally writes the ASM-mesh surface output
+    (`postProcessing/bladeSurface/<name>.csv` with the real station schema,
+    plus the opt-in `*_nodes.csv` table the comparison must ignore).
+    """
     turbine = root / compare.TURBINE_CSV
     turbine.parent.mkdir(parents=True, exist_ok=True)
     with turbine.open("w", newline="", encoding="utf-8") as stream:
@@ -69,7 +92,52 @@ def write_run(root: Path, sign: float = 1.0, tsr: float = TSR,
                     f"{sign * 200.0:.4f}", "0", "0", "1",
                     f"{sign * 0.08:.6f}", f"{sign * 0.60:.6f}", "1.5", "12",
                 ])
+    if surface_stations:
+        surface_dir = root / compare.SURFACE_DIR
+        surface_dir.mkdir(parents=True, exist_ok=True)
+        with (surface_dir / SURFACE_STATION_NAME).open(
+            "w", newline="", encoding="utf-8"
+        ) as stream:
+            writer = csv.writer(stream)
+            writer.writerow(SURFACE_STATION_COLUMNS)
+            for step in range(steps):
+                for index in range(surface_stations):
+                    root_dist = index / (surface_stations - 1)
+                    writer.writerow([
+                        f"{step * 0.008:.6f}", index, f"{root_dist:.6f}",
+                        "0.050000",
+                        f"{sign * 80.0:.4f}", "0", "0",
+                        f"{sign * (0.60 - 0.40 * root_dist):.6f}",
+                        f"{sign * (0.08 - 0.06 * root_dist):.6f}",
+                        "1.5", "12",
+                    ])
+        # The opt-in per-node table is not a station table: its basename is the
+        # station name plus `_nodes.csv`, and `read_surface_stations` must
+        # exclude it instead of trying to read `root_dist`/`c_ref_n` from it.
+        with (surface_dir / SURFACE_NODES_NAME).open(
+            "w", newline="", encoding="utf-8"
+        ) as stream:
+            writer = csv.writer(stream)
+            writer.writerow(SURFACE_NODE_COLUMNS)
+            writer.writerow([
+                "0.000000", "0", "0.1", "0", "12.192", "0", "0", "1",
+                f"{sign * 8.0:.4f}", "0", "0", "0.050000", "0.5", "0.25",
+            ])
     return root
+
+
+def linear_at(points, x):
+    """Independent linear interpolation oracle for the surface conversion."""
+    points = sorted(points)
+    if x <= points[0][0]:
+        return points[0][1]
+    if x >= points[-1][0]:
+        return points[-1][1]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if x0 <= x <= x1:
+            ratio = 0.0 if x1 == x0 else (x - x0) / (x1 - x0)
+            return y0 + ratio * (y1 - y0)
+    raise AssertionError(f"{x} outside the profile")
 
 
 def fake_model(tsr: float = TSR, cp: float = 0.30, cd: float = 0.55,
@@ -207,4 +275,125 @@ def test_main_fail_loud_exit_codes(tmp_path):
         "--run-dir", str(run), "--experiment", str(empty),
         "--out", str(tmp_path / "out4"), "--allow-short-window",
     ])
+    assert absent == compare.EXIT_MISSING_INPUT
+
+
+def quoted_header(source: str, marker: str) -> list[str]:
+    """Rebuild a C++ `<< "a,b" << "c,d" << endl` header as a column list."""
+    match = re.search(rf"\*{marker}_\s*<<(.*?)<<\s*endl", source, re.DOTALL)
+    assert match is not None, f"no {marker} header in the writer"
+    chunks = re.findall(r'"([^"]*)"', match.group(1))
+    return [
+        column for chunk in chunks for column in chunk.split(",") if column
+    ]
+
+
+def test_surface_csv_schema_matches_writer():
+    """The fixture schema is the one `bladeSurfaceSource.C` actually writes.
+
+    The comparison consumes a C++-produced CSV; if the writer schema drifts,
+    the synthetic fixture would keep passing while real runs break. Pin both
+    headers against the writer source.
+    """
+    source = (
+        TESTS_DIR.parent
+        / "src" / "fvOptions" / "bladeSurface" / "bladeSurfaceSource.C"
+    ).read_text(encoding="utf-8")
+    assert quoted_header(source, "stationFile") == SURFACE_STATION_COLUMNS
+    assert quoted_header(source, "nodeFile") == SURFACE_NODE_COLUMNS
+
+
+def test_main_three_way_surface_merge(tmp_path):
+    """Three models in both tables; surface rows use the element r/R mapping."""
+    alm = write_run(tmp_path / "alm")
+    asm = write_run(tmp_path / "asm")
+    asm_mesh = write_run(tmp_path / "asm-mesh", surface_stations=5)
+    out = tmp_path / "out"
+    rc = compare.main([
+        "--alm-dir", str(alm),
+        "--asm-dir", str(asm),
+        "--asm-mesh-dir", str(asm_mesh),
+        "--out", str(out),
+        "--allow-short-window", "--revolutions", "0", "1",
+        "--sign-gate",
+    ])
+    assert rc == compare.EXIT_OK
+
+    turbine_rows = list(
+        csv.DictReader((out / "turbine_comparison.csv").open(encoding="utf-8"))
+    )
+    spanwise_rows = list(
+        csv.DictReader((out / "spanwise_comparison.csv").open(encoding="utf-8"))
+    )
+    models = ["alm", "asm", "asm-mesh"]
+    assert sorted({row["model"] for row in turbine_rows}) == models
+    assert sorted({row["model"] for row in spanwise_rows}) == models
+    assert len(turbine_rows) == 3 * len(compare.TURBINE_BANDS)
+    for model in models:
+        stations = [
+            row["r_over_R"] for row in spanwise_rows if row["model"] == model
+        ]
+        assert stations == [f"{station:.2f}" for station in compare.STATIONS]
+        assert all(
+            row["within_band"] in ("yes", "no")
+            for row in spanwise_rows
+            if row["model"] == model
+        )
+
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert "surface_conversion" in metrics["definitions"]
+    surface = metrics["models"]["asm-mesh"]["metrics"]
+    assert surface["surface_stations"] == 5
+    # The synthetic directory has no run.json/twin, so the audit fields are
+    # best-effort nulls; a real run carries the staged hash (test_blade_stage).
+    assert surface["staged_stl_sha256"] is None
+    assert surface["surface_kernel"] is None
+
+    # Independent conversion: root_dist -> r/R with the element formula, then
+    # interpolation to the five measured stations.
+    radius = float(compare.load_config(compare.DEFAULT_CONFIG)["turbine"]["radius"])
+    span = 1.0 - compare.ROOT_CUTOUT_RADIUS / radius
+    stations = compare.read_surface_stations(asm_mesh, 0.0, 1.0, True)
+    assert [round(root_dist, 6) for root_dist, _, _ in stations] == [
+        0.0, 0.25, 0.5, 0.75, 1.0,
+    ]
+    mapped_n = [
+        (compare.ROOT_CUTOUT_RADIUS / radius + root_dist * span, c_ref_n)
+        for root_dist, c_ref_n, _ in stations
+    ]
+    mapped_t = [
+        (compare.ROOT_CUTOUT_RADIUS / radius + root_dist * span, c_ref_t)
+        for root_dist, _, c_ref_t in stations
+    ]
+    for station in compare.STATIONS:
+        values = metrics["models"]["asm-mesh"]["spanwise"][f"{station:.2f}"]
+        assert values[0] == pytest.approx(linear_at(mapped_n, station), rel=1e-12)
+        assert values[1] == pytest.approx(linear_at(mapped_t, station), rel=1e-12)
+
+    gate = json.loads((out / "sign_gate.json").read_text(encoding="utf-8"))
+    assert gate["pass"] is True
+    assert sorted(key for key in gate if key != "pass") == models
+    assert all(gate[model]["pass"] for model in models)
+
+
+def test_main_three_way_missing_surface_input(tmp_path):
+    """A missing or incomplete ASM-mesh directory exits non-zero."""
+    alm = write_run(tmp_path / "alm")
+    flags = ["--allow-short-window", "--revolutions", "0", "1"]
+
+    missing = compare.main([
+        "--alm-dir", str(alm),
+        "--asm-mesh-dir", str(tmp_path / "missing-surface"),
+        "--out", str(tmp_path / "out-missing"),
+    ] + flags)
+    assert missing == compare.EXIT_MISSING_INPUT
+
+    # A directory with a turbine CSV but no `postProcessing/bladeSurface/`
+    # station table is incomplete, not a silent ALM-style fallback.
+    incomplete = write_run(tmp_path / "asm-mesh-no-surface")
+    absent = compare.main([
+        "--alm-dir", str(alm),
+        "--asm-mesh-dir", str(incomplete),
+        "--out", str(tmp_path / "out-incomplete"),
+    ] + flags)
     assert absent == compare.EXIT_MISSING_INPUT
