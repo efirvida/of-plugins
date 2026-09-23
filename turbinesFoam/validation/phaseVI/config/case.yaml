@@ -186,6 +186,16 @@ stages:
     n_chordwise: [1, 3, 5]
     n_chordwise_mesh: fine
     executes: false
+  # S2 three-way comparison: ASM over the imported blade surface. Prepared
+  # only: `scripts/slurm/asm-mesh.slurm` (one task per speed/mesh) is never
+  # submitted by this change, and `runPhaseVI.sh --submit` refuses the model.
+  asm-mesh:
+    description: three-way comparison (ASM over the imported blade surface)
+    queue: sequana_cpu_long
+    models: [asm-mesh]
+    meshes: [coarse, fine]
+    speeds: [7]
+    executes: false
 
 actuator:
   end_effects:

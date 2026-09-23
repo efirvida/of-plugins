@@ -11,6 +11,7 @@ Usage:
     generate_case.py [--mesh coarse|fine|ultra] [--speed 7|10|13|15|20|25]
                      [--domain long|squat] [--profile production|smoke]
                      [--solver urans|iddes] [--n-chordwise N] [--ranks N]
+                     [--surface-kernel cosine|gaussian]
                      [--case-dir DIR] [--end-revs FLOAT]
                      [--start-from startTime|latestTime] [--check]
 
@@ -53,6 +54,12 @@ START_FROM_CHOICES = ("startTime", "latestTime")
 
 ALM_ELEMENT = "actuatorLineElement"
 ASM_ELEMENT = "actuatorSurfaceElement"
+
+# Case-relative path the ASM-mesh twin references; `runPhaseVI.sh -m asm-mesh`
+# stages the committed STL there (tools/stage_blade_stl.py).
+SURFACE_GEOMETRY = "constant/triSurface/phaseVI_blade.stl"
+# Paper cosine kernel (default) and the Gaussian ablation (design D7).
+SURFACE_KERNELS = ("cosine", "gaussian")
 
 PATCH_NAMES = ("inlet", "outlet", "bottom", "top", "sideMinus", "sidePlus")
 
@@ -480,13 +487,20 @@ def render_fv_options(
     element_type: str,
     sequence: str = "H",
     n_chordwise: int | None = None,
+    surface_geometry: str | None = None,
+    surface_kernel: str | None = None,
 ) -> str:
-    """ALM/ASM twins rendered from one function.
+    """ALM/ASM/ASM-mesh twins rendered from one function.
 
-    The twins differ only in the blade element keys: `elementType` and, for
-    the surface element, `nChordwise`. Path targets are found by
+    The twins differ only in the blade keys: `elementType`, for the surface
+    element `nChordwise`, and, when `surface_geometry` is set, the mesh-backed
+    surface keys `surfaceGeometry` and, for the Gaussian ablation only,
+    `kernel`. Path targets are found by
     `test_twins_differ_only_in_blade_keys`. `n_chordwise` overrides the
-    configured ASM strip count (the ALM has no such key).
+    configured ASM strip count (the ALM has no such key). `surface_kernel`
+    defaults to the paper cosine kernel and only `gaussian` renders a `kernel`
+    key. `projectElementForce` is never rendered: the blade source injects it
+    into the element dicts when a surface is configured (design D3).
     """
     values = kinematics(cfg, speed, mesh, sequence)
     turbine = cfg["turbine"]
@@ -500,9 +514,20 @@ def render_fv_options(
         raise ValueError("nChordwise must be a positive integer")
     else:
         n_chordwise = int(n_chordwise)
-    element_keys = f"                elementType {element_type};\n"
+    if surface_kernel is not None and surface_kernel not in SURFACE_KERNELS:
+        raise ValueError(
+            f"unknown surface kernel {surface_kernel!r}; choose from "
+            f"{list(SURFACE_KERNELS)}"
+        )
+    if surface_kernel is not None and surface_geometry is None:
+        raise ValueError("surface_kernel requires surface_geometry")
+    blade_keys = f"                elementType {element_type};\n"
     if element_type == ASM_ELEMENT:
-        element_keys += f"                nChordwise {n_chordwise};\n"
+        blade_keys += f"                nChordwise {n_chordwise};\n"
+    if surface_geometry is not None:
+        blade_keys += f'                surfaceGeometry "{surface_geometry}";\n'
+        if surface_kernel == "gaussian":
+            blade_keys += "                kernel gaussian;\n"
     dynamic = actuator["dynamic_stall"]
     end_effects = actuator["end_effects"]
     hub_rows = "\n".join(
@@ -550,7 +575,7 @@ def render_fv_options(
             {{
                 writePerf true;
                 writeElementPerf true;
-{element_keys.rstrip()}
+{blade_keys.rstrip()}
                 nElements {int(turbine['n_elements'])};
                 elementProfiles
                 (
@@ -613,6 +638,7 @@ def outputs(
     solver: str = "urans",
     n_chordwise: int | None = None,
     ranks: int | None = None,
+    surface_kernel: str = "cosine",
 ) -> dict[Path, str]:
     system = case_dir / "system"
     constant = case_dir / "constant"
@@ -631,6 +657,17 @@ def outputs(
         ),
         system / "fvOptions.ASM": render_fv_options(
             cfg, speed, mesh, case_dir, ASM_ELEMENT, sequence, n_chordwise
+        ),
+        system / "fvOptions.ASM-MESH": render_fv_options(
+            cfg,
+            speed,
+            mesh,
+            case_dir,
+            ASM_ELEMENT,
+            sequence,
+            n_chordwise,
+            surface_geometry=SURFACE_GEOMETRY,
+            surface_kernel=surface_kernel,
         ),
         constant / "transportProperties": render_transport_properties(cfg),
         constant / "turbulenceProperties": render_turbulence_properties(cfg, solver),
@@ -706,6 +743,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         help="override decomposition.number_of_subdomains in decomposeParDict",
     )
+    parser.add_argument(
+        "--surface-kernel",
+        choices=SURFACE_KERNELS,
+        default="cosine",
+        help="kernel of the ASM-mesh twin: cosine is the paper kernel "
+             "(the default; no key is rendered), gaussian is the ablation "
+             "and renders `kernel gaussian;`",
+    )
     parser.add_argument("--case-dir", type=Path, default=DEFAULT_CASE_DIR)
     parser.add_argument("--end-revs", type=float, default=None)
     parser.add_argument("--start-from", choices=START_FROM_CHOICES, default="startTime")
@@ -732,6 +777,7 @@ def main(argv: list[str] | None = None) -> int:
             solver=args.solver,
             n_chordwise=args.n_chordwise,
             ranks=args.ranks,
+            surface_kernel=args.surface_kernel,
         )
     except (KeyError, ValueError) as exc:
         print(f"case generation error: {exc}", file=sys.stderr)
