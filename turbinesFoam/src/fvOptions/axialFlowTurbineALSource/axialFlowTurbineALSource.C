@@ -314,6 +314,21 @@ void Foam::fv::axialFlowTurbineALSource::createBlades()
         bladeSubDict.add("elementGeometry", elementGeometry);
         bladeSubDict.add("initialVelocities", initialVelocities);
         bladeSubDict.add("dynamicStall", dynamicStallDict_);
+
+        // Forward the additive rotational augmentation block (like
+        // dynamicStall) and the radial geometry it needs into every blade
+        // subdict, identically for both blades. Nothing is added when the
+        // block is absent, so existing rotor dictionaries are unchanged.
+        if (coeffs_.found("rotationalAugmentation"))
+        {
+            bladeSubDict.add
+            (
+                "rotationalAugmentation",
+                coeffs_.subDict("rotationalAugmentation")
+            );
+            bladeSubDict.add("rotorRadius", rotorRadius_);
+            bladeSubDict.add("rootRadius", elementData[0][1]);
+        }
         bladeSubDict.add
         (
             "velocitySampleRadius",

@@ -115,6 +115,49 @@ void Foam::fv::actuatorLineElement::read()
         dsDict.lookup("active") >> dynamicStallActive_;
     }
 
+    // Read the local radial geometry additively; absent keys keep the prior
+    // behavior and leave the sentinels in place
+    radius_ = dict_.lookupOrDefault("radius", -VGREAT);
+    rotorRadius_ = dict_.lookupOrDefault("rotorRadius", -VGREAT);
+
+    // Create the rotational augmentation switch if found (additive, default
+    // off), mirroring the dynamicStall block read above
+    if (dict_.found("rotationalAugmentation"))
+    {
+        const dictionary raDict = dict_.subDict("rotationalAugmentation");
+        rotationalAugmentationActive_ = raDict.lookupOrDefault("active", false);
+        word defaultModel = "DuSelig";
+        rotationalAugmentationModel_ = raDict.lookupOrDefault<word>
+        (
+            "model",
+            defaultModel
+        );
+        a_ = raDict.lookupOrDefault("a", 1.0);
+        b_ = raDict.lookupOrDefault("b", 1.0);
+        d_ = raDict.lookupOrDefault("d", 1.0);
+
+        if (rotationalAugmentationModel_ != "DuSelig")
+        {
+            FatalIOErrorInFunction(raDict)
+                << "Unknown rotationalAugmentation model '"
+                << rotationalAugmentationModel_
+                << "'; only DuSelig is registered"
+                << exit(FatalIOError);
+        }
+
+        if
+        (
+            rotationalAugmentationActive_
+            and not (radius_ > 0.0 and rotorRadius_ > 0.0)
+        )
+        {
+            WarningInFunction
+                << "rotationalAugmentation active but radius/rotorRadius "
+                << "absent; the correction is skipped" << endl;
+            rotationalAugmentationActive_ = false;
+        }
+    }
+
     // Read flow curvature correction subdictionary
     if (dict_.found("flowCurvature"))
     {
@@ -240,6 +283,39 @@ void Foam::fv::actuatorLineElement::lookupCoefficients()
     liftCoefficient_ = profileData_.liftCoefficient(angleOfAttack_);
     dragCoefficient_ = profileData_.dragCoefficient(angleOfAttack_);
     momentCoefficient_ = profileData_.momentCoefficient(angleOfAttack_);
+}
+
+
+void Foam::fv::actuatorLineElement::correctRotationalAugmentation()
+{
+    const scalar pi = Foam::constant::mathematical::pi;
+    const scalar cOverR = chordLength_/radius_;
+    const scalar ROverR = rotorRadius_/radius_;
+    const scalar omegaR = omega_*rotorRadius_;
+    const scalar lambda = omegaR/Foam::sqrt
+    (
+        magSqr(freeStreamVelocity_) + sqr(omegaR)
+    );
+
+    // Du-Selig Eqs. 11-12: the exponent is (d/Lambda)(R/r) for fL and
+    // (d/(2 Lambda))(R/r) for fD (a = b = d = 1 by default)
+    const scalar xL = (d_/lambda)*ROverR;
+    const scalar xD = (d_/(2.0*lambda))*ROverR;
+    const scalar qL = Foam::pow(cOverR, xL);
+    const scalar qD = Foam::pow(cOverR, xD);
+    const scalar fL = (1.0/(2.0*pi))
+        *((1.6*Foam::pow(cOverR, a_) - qL)/(0.1267*b_ + qL) - 1.0);
+    const scalar fD = (1.0/(2.0*pi))
+        *((1.6*Foam::pow(cOverR, a_) - qD)/(0.1267*b_ + qD) - 1.0);
+
+    // Du-Selig Eqs. 9-10, in place on the static coefficients
+    const scalar alpha = degToRad(angleOfAttack_);
+    const scalar alpha0 = degToRad(profileData_.zeroLiftAngleOfAttack());
+    const scalar CLp = 2.0*pi*(alpha - alpha0);
+    const scalar CD0 = profileData_.zeroLiftDragCoeff();
+
+    liftCoefficient_ += fL*(CLp - liftCoefficient_);
+    dragCoefficient_ -= fD*(dragCoefficient_ - CD0);
 }
 
 
@@ -571,6 +647,13 @@ Foam::fv::actuatorLineElement::actuatorLineElement
     liftCoefficient_(0.0),
     dragCoefficient_(0.0),
     momentCoefficient_(0.0),
+    rotationalAugmentationActive_(false),
+    rotationalAugmentationModel_("DuSelig"),
+    a_(1.0),
+    b_(1.0),
+    d_(1.0),
+    radius_(-VGREAT),
+    rotorRadius_(-VGREAT),
     profileName_(dict.lookup("profileName")),
     debugLevel_(debug),
     profileData_(profileName_, dict.subDict("profileData"), debugLevel_),
@@ -817,6 +900,14 @@ void Foam::fv::actuatorLineElement::calculateForce
 
     // Lookup lift and drag coefficients
     lookupCoefficients();
+
+    // Apply the Du-Selig rotational augmentation in place, after the static
+    // lookup and before dynamic stall, added mass and the end-effect factor,
+    // so every downstream stage consumes the corrected coefficients
+    if (rotationalAugmentationActive_)
+    {
+        correctRotationalAugmentation();
+    }
 
     if (debug)
     {

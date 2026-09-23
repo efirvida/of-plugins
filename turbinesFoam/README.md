@@ -119,6 +119,81 @@ runtime, while the ALM tutorial defaults to `0.5`.
   surface model's mesh-only epsilon is intended to be re-validated on a finer
   mesh where it gives 1–2 cells of overlap.
 
+## Rotational augmentation (3D stall delay)
+
+An optional **Du–Selig rotational augmentation** (3D stall delay) correction can
+be applied to every element of a line/blade/turbine. It lives in the one shared
+element force chain (`actuatorLineElement::calculateForce`), so the actuator
+line, the no-mesh actuator surface element and the mesh-backed blade surface all
+inherit it with no per-model code. It is additive and **default-off**: with the
+block absent or inactive the produced element, line and turbine output is
+byte-identical to the pre-change chain.
+
+### Configuration
+
+In the line (`actuatorLineSourceCoeffs`), blade or turbine subdictionary:
+
+```
+rotationalAugmentation
+{
+    active  off;       // optional, default off
+    model   DuSelig;   // optional, only registered name
+    a       1;         // optional, paper constants (a = b = d = 1)
+    b       1;
+    d       1;
+}
+```
+
+`active`, `model`, `a`, `b` and `d` are all optional. An unregistered `model`
+fails loudly (`FatalIOError`). When the correction is active the element needs a
+local radius and the rotor radius; the blade/turbine source injects these
+additively as `radius` and `rotorRadius` (neither key is user-facing). The
+injected station follows the comparison tool's identity
+
+    radius = rootRadius + rootDistance * (rotorRadius - rootRadius)
+
+with `rootRadius` the blade root cutout and `rootDistance` the normalized
+spanwise position (0 at the root cutout, 1 at the tip). If an active block has no
+radial geometry the element warns and skips the correction (no abort).
+
+### Formulation
+
+With `CL,2D`/`CD,2D` the static polar values, `CL,p = 2*pi*(alpha - alpha0)` the
+potential-flow lift, `CD,0` the profile's zero-lift drag, `c/r` the local
+chord-to-radius ratio, `R/r` the rotor-to-local radius ratio and
+`Lambda = Omega*R / sqrt(U^2 + (Omega*R)^2)`, the correction is the paper's
+Du–Selig equations (Yang & Sotiropoulos, arXiv:1702.02108v4, Eqs. 9–12):
+
+    CL,3D = CL,2D + fL * (CL,p - CL,2D)
+    CD,3D = CD,2D - fD * (CD,2D - CD,0)
+    fL = (1/2*pi) * [ (1.6*(c/r)^a - (c/r)^((d/Lambda)*(R/r))) /
+                      (0.1267*b + (c/r)^((d/Lambda)*(R/r))) - 1 ]
+    fD = (1/2*pi) * [ (1.6*(c/r)^a - (c/r)^((d/(2*Lambda))*(R/r))) /
+                      (0.1267*b + (c/r)^((d/(2*Lambda))*(R/r))) - 1 ]
+
+The exponent is `(d/Lambda)*(R/r)` for `fL` and `(d/(2*Lambda))*(R/r)` for
+`fD`; the paper constants default to `a = b = d = 1`. The correction is applied
+in place on the coefficients **after** the static lookup and **before** dynamic
+stall, added mass and the end-effect factor, so every downstream stage and the
+per-element CSV consume the corrected values and no stage re-applies it.
+
+### Sensitivity note and claim boundary
+
+- **No free-parameter calibration:** only the paper constants `a = b = d = 1`
+  are used; there is no fit or tuning of the correction.
+- **Near-tip behaviour:** for small `c/r` the lift factor `fL` becomes negative
+  (approaching `-1/(2*pi)`), so the outboard stalled lift is *reduced*; `fD` is
+  positive inboard and negative outboard at the Phase VI `Lambda`. The equations
+  are implemented literally with **no invented clamp**, and the behaviour is
+  recorded rather than suppressed.
+- **End-effect ordering:** the end-effect factor is applied after the hook, so
+  the paper's Du–Selig → tip-loss order is preserved by construction; the tip
+  lift is additionally reduced by the tip-loss model.
+- **Claim boundary:** the correction is expected to change the trend and the
+  stall onset of the deep-stall region; no agreement better than the documented
+  Phase VI band is promised a priori. The combined Du–Selig + dynamic-stall
+  model is **not** claimed validated.
+
 ## Nacelle surface model
 
 An optional nacelle/hub **actuator surface model** (`nacelleSurfaceSource`,

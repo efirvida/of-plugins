@@ -141,6 +141,27 @@ protected:
         //- 1/4 chord moment coefficient
         scalar momentCoefficient_;
 
+        //- Switch for applying rotational augmentation
+        bool rotationalAugmentationActive_;
+
+        //- Rotational augmentation model name (only "DuSelig" registered)
+        word rotationalAugmentationModel_;
+
+        //- Du-Selig constant (paper default 1)
+        scalar a_;
+
+        //- Du-Selig constant (paper default 1)
+        scalar b_;
+
+        //- Du-Selig constant (paper default 1)
+        scalar d_;
+
+        //- Local radial station (sentinel when absent)
+        scalar radius_;
+
+        //- Rotor radius (sentinel when absent)
+        scalar rotorRadius_;
+
         //- Profile name
         word profileName_;
 
@@ -230,6 +251,9 @@ protected:
 
         //- Lookup force coefficients
         void lookupCoefficients();
+
+        //- Apply the Du-Selig rotational augmentation in place
+        void correctRotationalAugmentation();
 
         //- Calculate projection width epsilon
         virtual scalar calcProjectionEpsilon();

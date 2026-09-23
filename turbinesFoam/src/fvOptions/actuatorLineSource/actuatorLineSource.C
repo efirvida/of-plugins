@@ -211,6 +211,15 @@ void Foam::fv::actuatorLineSource::createElements()
     const bool hasSurfaceGeometry = not surfaceGeometry_.empty();
     const bool projectElementForceGiven = coeffs_.found("projectElementForce");
 
+    // Additive radial geometry (D2): when the rotor/root radii are present,
+    // inject the local radial station and the rotor radius into every element
+    // dict. Absent inputs leave the element dicts unchanged.
+    const scalar rotorRadius =
+        coeffs_.lookupOrDefault("rotorRadius", -VGREAT);
+    const scalar rootRadius =
+        coeffs_.lookupOrDefault("rootRadius", -VGREAT);
+    const bool haveRadialGeometry = rotorRadius > 0.0 and rootRadius > 0.0;
+
     // Lookup initial element velocities if present
     List<vector> initialVelocities(nGeometryPoints, vector::zero);
     coeffs_.readIfPresent("initialVelocities", initialVelocities);
@@ -343,6 +352,23 @@ void Foam::fv::actuatorLineSource::createElements()
             dictionary dsDict = coeffs_.subDict("dynamicStall");
             dsDict.add("chordLength", chordLength);
             dict.add("dynamicStall", dsDict);
+        }
+        // Forward the additive rotational augmentation block (like
+        // dynamicStall); absent block -> the element default applies
+        if (coeffs_.found("rotationalAugmentation"))
+        {
+            dict.add
+            (
+                "rotationalAugmentation",
+                coeffs_.subDict("rotationalAugmentation")
+            );
+        }
+        if (haveRadialGeometry)
+        {
+            const scalar radius =
+                rootRadius + rootDistance*(rotorRadius - rootRadius);
+            dict.add("radius", radius);
+            dict.add("rotorRadius", rotorRadius);
         }
         dictionary fcDict = coeffs_.subOrEmptyDict("flowCurvature");
         dict.add("flowCurvature", fcDict);
