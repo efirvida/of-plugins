@@ -51,6 +51,13 @@ R = 1.0
 CYLINDER_RATIO = 6.0
 BODY_LENGTH = (CYLINDER_RATIO + 1.0) * R  # nose at -7R, downstream end at 0
 
+# committed artefact hashes (geometry/PROVENANCE.md); the S1 nacelle bytes are
+# frozen — S2 (blade component) must not change them
+NACELLE_STL_SHA256 = "18c7beef9e323ba28da20f5c813232c0059693f221a594fd913c4e69c14cb74c"
+NACELLE_METADATA_SHA256 = (
+    "f237fc40840e9d0970583e32f3b4f21427ab8c29d83755b8f6b55ebb37437b2d"
+)
+
 # the paper's surface resolution (arXiv:1702.02108v4 Sec. 4.1) and the accepted band
 N_TRIANGLES_PAPER = 2652
 TRIANGLE_TOLERANCE = 0.05
@@ -214,9 +221,14 @@ def test_metadata_schema_and_node_records():
     assert metadata["units"] == "m"
     assert metadata["generator"]["script"] == "src/nacelle.geo"
     assert metadata["generator"]["gmsh_version"] == GMSH_VERSION
-    assert metadata["_reserved"] == {
-        "blade": {"radial_station": None, "chord_fraction": None}
-    }
+
+    # `_reserved.blade` is the legacy S1 placeholder, not a pending blade
+    # output: the S2 blade component populates `radial_station`/`chord_fraction`
+    # in its own metadata (`metadata/phaseVI_blade.json`, which carries no
+    # `_reserved`); this nacelle block keeps its null values for byte stability.
+    reserved = metadata["_reserved"]
+    assert set(reserved) == {"blade"}
+    assert reserved["blade"] == {"radial_station": None, "chord_fraction": None}
 
     triangles = read_binary_stl(STL)
     nodes = metadata["nodes"]
@@ -248,6 +260,23 @@ def test_metadata_hashes_trace_inputs_and_artefacts():
     assert metadata["stl_sha256"] == sha256(STL)
 
 
+def test_committed_nacelle_bytes_are_pinned():
+    """The S1 nacelle artefacts are frozen; S2 must not change their bytes.
+
+    The literal hashes are the ones recorded in `geometry/PROVENANCE.md`, so a
+    regeneration that changes the nacelle output (or its provenance record)
+    fails here before any solver-related test can hide it.
+    """
+    metadata = load_metadata()
+    assert sha256(STL) == NACELLE_STL_SHA256
+    assert metadata["stl_sha256"] == NACELLE_STL_SHA256
+    assert sha256(METADATA) == NACELLE_METADATA_SHA256
+
+    text = PROVENANCE.read_text(encoding="utf-8")
+    assert NACELLE_STL_SHA256 in text
+    assert NACELLE_METADATA_SHA256 in text
+
+
 def test_provenance_records_sources_generator_and_hashes():
     text = PROVENANCE.read_text(encoding="utf-8")
     metadata = load_metadata()
@@ -269,7 +298,7 @@ def test_provenance_records_sources_generator_and_hashes():
     assert str(metadata["n_triangles"]) in text
 
 
-def test_readme_documents_usage_and_s2_deferral():
+def test_readme_documents_usage_and_naming_policy():
     text = README.read_text(encoding="utf-8")
     for token in (
         "makeGeometry.py",
@@ -277,8 +306,9 @@ def test_readme_documents_usage_and_s2_deferral():
         "--component",
         "--gmsh",
         "nacelle",
-        "blade0",
-        "S2",
+        "phaseVI_blade",
+        "retired",
+        "mexico_blade",
         "input_sha256",
         "_reserved",
         "PROVENANCE.md",
@@ -289,16 +319,20 @@ def test_readme_documents_usage_and_s2_deferral():
 # --------------------------------------------------------------------------
 # generator CLI (no gmsh needed for the argument handling)
 # --------------------------------------------------------------------------
-def test_generator_rejects_deferred_blade_components():
-    completed = subprocess.run(
-        [sys.executable, str(GENERATOR), "--component", "blade0"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert completed.returncode != 0
-    assert "S2" in completed.stderr
-    assert "blade0" in completed.stderr
+def test_generator_rejects_retired_blade_components():
+    """`blade0/1/2` are retired S2 names (not deferred outputs any more)."""
+    for name in ("blade0", "blade1", "blade2"):
+        completed = subprocess.run(
+            [sys.executable, str(GENERATOR), "--component", name],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert completed.returncode == 1
+        assert "retired" in completed.stderr
+        assert name in completed.stderr
+        assert "phaseVI_blade" in completed.stderr
+        assert "deferred" not in completed.stderr
 
 
 def test_generator_rejects_unknown_components():

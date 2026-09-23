@@ -190,11 +190,18 @@ def test_polar_multire():
 
 
 def test_provenance_fields():
-    geometry = (DATA / "geometry" / "PROVENANCE.md").read_text(encoding="utf-8")
-    polars = (DATA / "polars" / "PROVENANCE.md").read_text(encoding="utf-8")
-    experiment = (DATA / "experiment" / "PROVENANCE.md").read_text(encoding="utf-8")
-    for text in (geometry, polars, experiment):
-        assert "2026-09-19" in text
+    # every committed data directory carries a PROVENANCE.md (missing file
+    # fails the read), including `s809/` added by S2
+    provenance = {
+        name: (DATA / name / "PROVENANCE.md").read_text(encoding="utf-8")
+        for name in ("geometry", "polars", "experiment", "s809")
+    }
+    geometry = provenance["geometry"]
+    experiment = provenance["experiment"]
+    for name in ("geometry", "polars", "experiment"):
+        assert "2026-09-19" in provenance[name]
+    # the common attribution and package pin hold for every directory
+    for text in provenance.values():
         assert "8284be8c" in text
         assert "52fd258" in text
     assert "10.2172/15000240" in geometry
@@ -203,6 +210,22 @@ def test_provenance_fields():
     assert "8e1cfad2" in experiment
     assert "ldsmean" in experiment
     assert "WTBARO" in experiment
+
+    # the S809 dataset (S2) follows the same per-directory rules
+    s809 = provenance["s809"]
+    assert "2026-09-23" in s809
+    assert "NREL/SR-440-6918" in s809
+    assert "Table 2" in s809
+    assert "PyMuPDF" in s809
+    assert "a7496aad5680d9d4001e36cf8b13d9603ea31956093cded60976dd8fcaffeeb3" in s809
+    assert (
+        hashlib.sha256((DATA / "s809" / "s809_somers_nlr.csv").read_bytes()).hexdigest()
+        in s809
+    )
+    assert "TP-500-29955" in s809
+    assert "TP-442-7817" in s809
+    for field in ("Source", "Table", "Row selection", "Units", "Extraction date"):
+        assert field in s809, f"s809/PROVENANCE.md does not record '{field}'"
 
 
 def test_no_report_artefacts_committed():
