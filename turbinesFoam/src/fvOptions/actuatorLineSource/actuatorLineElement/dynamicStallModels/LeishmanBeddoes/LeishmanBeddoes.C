@@ -318,9 +318,33 @@ void Foam::fv::LeishmanBeddoes::calcK1K2()
     A.source()[0] = Foam::sum(cm/cn*(1.0 - f)) - K0_*Foam::sum((1.0 - f));
     A.source()[1] = Foam::sum(cm/cn*sin(pi*Foam::pow(f, m)))
                   - K0_*Foam::sum(sin(pi*Foam::pow(f, m)));
-    List<scalar> sol = A.solve();
-    K1_ = sol[0];
-    K2_ = sol[1];
+
+    // Analytic 2x2 (Cramer) solve of the normal equations with a determinant
+    // guard. simpleMatrix::solve() aborts with "Singular Matrix" when the fit
+    // is rank-deficient, which happens for a polar with no points in the fit
+    // range (e.g. the cylinder profile) or a fully clamped separation curve.
+    // The guard falls back to K1 = K2 = 0 and records the path taken.
+    const scalar det = A[0][0]*A[1][1] - A[0][1]*A[1][0];
+    const scalar scale =
+        Foam::max(mag(A[0][0]*A[1][1]), mag(A[0][1]*A[1][0])) + VSMALL;
+    if (mag(det) > 1.0e-12*scale)
+    {
+        K1_ = (A.source()[0]*A[1][1] - A[0][1]*A.source()[1])/det;
+        K2_ = (A[0][0]*A.source()[1] - A.source()[0]*A[1][0])/det;
+        if (debug)
+        {
+            Info<< "    Leishman-Beddoes K1/K2 analytic solve (det = "
+                << det << ", path = well-conditioned)" << endl;
+        }
+    }
+    else
+    {
+        WarningInFunction
+            << "singular/ill-conditioned Leishman-Beddoes K1/K2 fit matrix "
+            << "(det = " << det << "); falling back to K1 = K2 = 0" << endl;
+        K1_ = 0.0;
+        K2_ = 0.0;
+    }
 }
 
 
