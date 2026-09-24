@@ -508,9 +508,11 @@ def render_fv_options(
     `rotational_augmentation` defaults to the `actuator.rotational_augmentation`
     block; when configured (always, for the committed case) the
     `rotationalAugmentation` block is rendered identically in all three twins at
-    the element-key indentation, so the twins stay identical except for the
-    blade keys. `root_effects` defaults to `actuator.end_effects.root` and is
-    the render-time ablation toggle (design D5, §6.2).
+    the rotor-coeffs level (mirroring `dynamicStall`), so the twins stay
+    identical except for the blade keys and AFTAL forwards the block with the
+    radial geometry the element needs. `root_effects` defaults to
+    `actuator.end_effects.root` and is the render-time ablation toggle (design
+    D5, §6.2).
     """
     values = kinematics(cfg, speed, mesh, sequence)
     turbine = cfg["turbine"]
@@ -545,17 +547,23 @@ def render_fv_options(
         if rotational_augmentation is None
         else rotational_augmentation
     )
-    if augmentation is not None:
+    # Mirror `dynamicStall`: render the augmentation block at the rotor-coeffs
+    # level so AFTAL forwards it into each blade subdict together with the
+    # `rotorRadius`/`rootRadius` the element needs. Rendering it inside a blade
+    # subdict bypasses that forwarding and the correction is silently skipped.
+    if augmentation is None:
+        augmentation_block = ""
+    else:
         active = bool(augmentation["active"])
-        blade_keys += (
-            "                rotationalAugmentation\n"
-            "                {\n"
-            f"                    active {'on' if active else 'off'};\n"
-            f"                    model {augmentation['model']};\n"
-            f"                    a {float(augmentation['a']):.8g};\n"
-            f"                    b {float(augmentation['b']):.8g};\n"
-            f"                    d {float(augmentation['d']):.8g};\n"
-            "                }\n"
+        augmentation_block = (
+            "\n\n        rotationalAugmentation\n"
+            "        {\n"
+            f"            active {'on' if active else 'off'};\n"
+            f"            model {augmentation['model']};\n"
+            f"            a {float(augmentation['a']):.8g};\n"
+            f"            b {float(augmentation['b']):.8g};\n"
+            f"            d {float(augmentation['d']):.8g};\n"
+            "        }"
         )
     root = bool(end_effects["root"]) if root_effects is None else bool(root_effects)
     hub_rows = "\n".join(
@@ -584,7 +592,7 @@ def render_fv_options(
         {{
             active {'on' if dynamic['active'] else 'off'};
             dynamicStallModel {dynamic['model']};
-        }}
+        }}{augmentation_block}
 
         endEffects
         {{

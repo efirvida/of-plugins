@@ -272,6 +272,16 @@ def test_rotational_augmentation_rendered(cfg, tmp_path):
     for key in ("active on;", "model DuSelig;", "a 1;", "b 1;", "d 1;"):
         assert key in alm
 
+    # The block must sit at the rotor-coeffs level (mirroring `dynamicStall`),
+    # never inside a blade subdict: only the rotor-level block is forwarded by
+    # AFTAL together with `rotorRadius`/`rootRadius`, so a blade-level block
+    # makes the element skip the correction (the proxy matrix caught this).
+    coeffs = block(
+        render(generate_case.ALM_ELEMENT), "axialFlowTurbineALSourceCoeffs"
+    )
+    assert "rotationalAugmentation" in coeffs
+    assert "rotationalAugmentation" not in block(coeffs, "blade1")
+
     # The committed default renders the same block with the switch off.
     committed = (PACKAGE / "case" / "system" / "fvOptions.ALM").read_text()
     default = block(committed, "rotationalAugmentation")
