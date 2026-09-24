@@ -313,6 +313,14 @@ def nogeom_case(tmp_path_factory):
     return case_dir
 
 
+@pytest.fixture(scope="module")
+def cylinder_case(tmp_path_factory):
+    case_dir = str(tmp_path_factory.mktemp("ra-cylinder") / "case")
+    _copy_case(case_dir)
+    _run_case(case_dir, "-cylinder")
+    return case_dir
+
+
 # --------------------------------------------------------------------------- #
 # Pure-Python reference
 # --------------------------------------------------------------------------- #
@@ -475,6 +483,44 @@ def test_absent_keys_keep_old_dict(nogeom_case):
         assert row["cd"] == pytest.approx(static_cd(row["alpha_deg"]), rel=1e-4)
     log = _read_log(nogeom_case)
     assert "rotationalAugmentation active but radius/rotorRadius absent" in log
+
+
+def test_degenerate_profile_skipped(cylinder_case):
+    """A two-point `cylinder` root profile is skipped, never a crash.
+
+    The Phase VI case mixes a degenerate root `cylinder` (only +/-180 deg) with
+    the S809 lifting sections. The augmentation's zero-lift lookup interpolates
+    over [-10, 10] deg, which is empty for the cylinder; without the guard that
+    indexes an empty list and segfaults. The lifting element must still be
+    corrected.
+    """
+    # Element 0 (cylinder): static table only, cl = 0 and cd = 1.1, no crash.
+    row0 = _initial_row(cylinder_case, 0)
+    assert row0["cl"] == pytest.approx(0.0, abs=1e-9)
+    assert row0["cd"] == pytest.approx(1.1, rel=1e-6)
+
+    # Element 1 (S809): the correction is applied exactly per Eqs. 9-12.
+    row1 = _initial_row(cylinder_case, 1)
+    cl_3d, cd_3d, cl_2d, _ = _expected_corrected(
+        row1["alpha_deg"], ELEMENT_RADIUS[1], TSR_ON
+    )
+    assert row1["cl"] == pytest.approx(cl_3d, rel=2e-4)
+    assert row1["cd"] == pytest.approx(cd_3d, rel=2e-4)
+    assert row1["cl"] != pytest.approx(cl_2d, rel=1e-6)
+
+    # The guard is structural too: the element skips on the profile query.
+    src = open(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "src", "fvOptions", "actuatorLineSource", "actuatorLineElement",
+        "actuatorLineElement.C",
+    )).read()
+    assert "profileData_.hasZeroLiftReference()" in src
+    profile_src = open(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "src", "fvOptions", "actuatorLineSource", "actuatorLineElement",
+        "profileData", "profileData.C",
+    )).read()
+    assert "bool Foam::profileData::hasZeroLiftReference()" in profile_src
 
 
 def test_unknown_model_rejected(tmp_path):

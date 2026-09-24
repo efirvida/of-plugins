@@ -371,6 +371,12 @@ public:
             //- Return zero lift moment coefficient
             scalar zeroLiftMomentCoeff();
 
+            //- True when the profile has lift data in the zero-lift reference
+            //  window [-10, 10] deg. False for a degenerate placeholder table
+            //  (the Phase VI root `cylinder` has only +/-180 deg), for which
+            //  `zeroLiftAngleOfAttack()`/`zeroLiftDragCoeff()` are undefined.
+            bool hasZeroLiftReference();
+
             //- Return normal coefficient slope (1/rad)
             scalar normalCoeffSlope();
 

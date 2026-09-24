@@ -896,6 +896,26 @@ Foam::scalar Foam::profileData::zeroLiftMomentCoeff()
 }
 
 
+bool Foam::profileData::hasZeroLiftReference()
+{
+    // `calcZeroLift*` interpolate over the [-10, 10] deg window; a degenerate
+    // placeholder table (e.g. the two-point Phase VI root cylinder) has no
+    // station in that window, so the zero-lift reference is undefined.
+    forAll(angleOfAttackList_, i)
+    {
+        if
+        (
+            angleOfAttackList_[i] >= -10.0
+            and angleOfAttackList_[i] <= 10.0
+        )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 Foam::scalar Foam::profileData::normalCoeffSlope()
 {
     if (normalCoeffSlope_ == VGREAT)

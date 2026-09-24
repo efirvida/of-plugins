@@ -288,6 +288,15 @@ void Foam::fv::actuatorLineElement::lookupCoefficients()
 
 void Foam::fv::actuatorLineElement::correctRotationalAugmentation()
 {
+    // The Du-Selig correction is defined relative to the profile's zero-lift
+    // reference. A degenerate placeholder table (the Phase VI root `cylinder`
+    // has only +/-180 deg) has no such reference; skip the correction rather
+    // than fabricate one (no invented clamp, design section 2.4).
+    if (not profileData_.hasZeroLiftReference())
+    {
+        return;
+    }
+
     const scalar pi = Foam::constant::mathematical::pi;
     const scalar cOverR = chordLength_/radius_;
     const scalar ROverR = rotorRadius_/radius_;
