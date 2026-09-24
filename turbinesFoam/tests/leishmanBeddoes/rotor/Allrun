@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Minimal one-blade axialFlowTurbineALSource case for the Leishman-Beddoes
+# singularity guard tests (W2). The args are:
+#   $1: `-parallel` or nothing
+#
+# The element-0 cylinder profile has no station in the K1/K2 fit range
+# [0.5, 25] deg, so `calcK1K2` builds a singular normal-equation matrix; the
+# guard must fall back to K1 = K2 = 0 instead of aborting.
+
+cd ${0%/*} || exit 1    # run from this directory
+
+# Source tutorial run functions
+. $WM_PROJECT_DIR/bin/tools/RunFunctions
+
+# Copy initial conditions
+cp -rf 0.org 0
+
+runApplication blockMesh
+runApplication topoSet
+
+if [ "$1" = "-parallel" ]
+then
+    runApplication decomposePar
+    runParallel pimpleFoam
+else
+    runApplication pimpleFoam
+fi
+
+# ----------------------------------------------------------------- end-of-file

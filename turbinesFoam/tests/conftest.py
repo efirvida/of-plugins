@@ -21,6 +21,7 @@ SOLVER_DRIVEN = (
     "test_asm.py",
     "test_blade_surface.py",
     "test_cftal.py",
+    "test_leishman_beddoes_guard.py",
     "test_libs.py",
     "test_nacelle.py",
     "test_rotational_augmentation.py",

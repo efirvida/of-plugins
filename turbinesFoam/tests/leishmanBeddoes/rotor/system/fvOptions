@@ -1,0 +1,122 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2506                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvOptions;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Minimal one-blade axial-flow rotor for the Leishman-Beddoes singularity
+// guard tests (W2).
+//
+// Element 0 is a `cylinder` profile with NO angle of attack inside the K1/K2
+// fit range [0.5, 25] deg, so `calcK1K2` builds an all-zero normal-equation
+// matrix (A = 0): the pre-guard code aborts with `Singular Matrix`, the guard
+// takes the documented fallback. The table keeps out-of-range stations
+// (-10, 0, 170, 180 deg) so `calcNormalCoeffSlope` and `calcZeroLift*` stay
+// non-singular; the S1/S2 fit is skipped through explicit `S1List`/`S2List`
+// coefficients because its ranges are subsets of the empty K1/K2 interval.
+//
+// Element 1 is the S809 polar: a well-conditioned K1/K2 matrix, so the
+// analytic branch is exercised alongside the fallback in the same run.
+//
+// This mirrors the Phase VI configuration that aborted at t = 0.008 s
+// (dynamicStall on, LeishmanBeddoesCoeffs). It intentionally does NOT cover
+// the separate `profileData::calcNormalCoeffSlope` singularity of a
+// two-point cylinder table, which is out of W2's one-method scope.
+
+turbine
+{
+    type            axialFlowTurbineALSource;
+    active          on;
+
+    axialFlowTurbineALSourceCoeffs
+    {
+        fieldNames          (U);
+        selectionMode       cellSet;
+        cellSet             turbine;
+        origin              (0 0 0);
+        axis                (1 0 0);
+        verticalDirection   (0 0 1);
+        freeStreamVelocity  (10 0 0);
+        tipSpeedRatio       3.0;
+        rotorRadius         0.45;
+
+        dynamicStall
+        {
+            active              on;
+            dynamicStallModel   LeishmanBeddoes;
+            LeishmanBeddoesCoeffs
+            {
+                speedOfSound    343;
+
+                // Explicit S1/S2 static coefficients skip the S1/S2
+                // least-squares fit for BOTH elements. That fit's angle
+                // ranges are subsets of the K1/K2 range [0.5, 25] deg, so
+                // for the cylinder (whose K1/K2 range is deliberately empty)
+                // it would divide by zero. Skipping it leaves `calcK1K2` as
+                // the only Leishman-Beddoes fit exercised, which is exactly
+                // the W2 one-method blast radius. `ReList` is required by
+                // `interpolateStaticParam`; the values are inert here.
+                ReList          (1e6 2e6);
+                S1List          (2.0 2.0);
+                S2List          (1.0 1.0);
+            }
+        }
+
+        endEffects
+        {
+            active          off;
+            endEffectsModel Glauert;
+        }
+
+        blades
+        {
+            blade1
+            {
+                writePerf           true;
+                writeElementPerf    true;
+                elementType         actuatorLineElement;
+                nElements           2;
+                elementProfiles     (cylinder S809);
+                elementData
+                (
+                    (0.0  0.05  0.0  0.04  0.25  0.0)
+                    (0.0  0.45  0.0  0.04  0.25  0.0)
+                );
+            }
+        }
+
+        profileData
+        {
+            cylinder
+            {
+                // No station in [0.5, 25] deg: the K1/K2 fit range is empty.
+                data
+                (
+                    (-180 0 1.1 0)
+                    (-10  0 1.1 0)
+                    (0    0 1.1 0)
+                    (170  0 1.1 0)
+                    (180  0 1.1 0)
+                );
+            }
+
+            S809
+            {
+                Re 1e6;
+                data (#include "S809.dat");
+            }
+        }
+    }
+}
+
+// ************************************************************************* //
