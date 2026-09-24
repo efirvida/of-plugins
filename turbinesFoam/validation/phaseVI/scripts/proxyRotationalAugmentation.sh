@@ -42,7 +42,22 @@ set -eu
 export FOAM_USER_LIBBIN=$WM_PROJECT_USER_DIR/platforms/$WM_OPTIONS/lib
 export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/lib/sys-openmpi:$LD_LIBRARY_PATH
 
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Resolve the harness directory. Under sbatch `$0` is Slurm's spooled copy, so
+# fall back to `PROXY_SCRIPTS_DIR` (exported by the harness `--submit` path) or
+# to the submitted script path reported by `scontrol`.
+here=${PROXY_SCRIPTS_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}
+if [ ! -f "$here/proxyRotationalAugmentation.py" ]; then
+    submitted=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
+        | sed -n 's/^[[:space:]]*Command=//p')
+    if [ -n "$submitted" ]; then
+        here=$(CDPATH= cd -- "$(dirname -- "$submitted")" && pwd)
+    fi
+fi
+if [ ! -f "$here/proxyRotationalAugmentation.py" ]; then
+    echo "cannot locate proxyRotationalAugmentation.py;" \
+         "set PROXY_SCRIPTS_DIR to its directory" >&2
+    exit 1
+fi
 
 step_args=""
 for step in "$@"; do

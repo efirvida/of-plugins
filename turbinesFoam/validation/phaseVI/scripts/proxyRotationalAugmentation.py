@@ -304,6 +304,9 @@ def build_submit_command(job_script: Path, queue: str) -> list[str]:
         "sbatch",
         f"--partition={queue}",
         f"--ntasks={RUN_RANKS}",
+        # Slurm spools the script, so `$0` no longer points at the committed
+        # wrapper; export the harness directory for it to resolve its Python.
+        f"--export=ALL,PROXY_SCRIPTS_DIR={SCRIPTS}",
         str(job_script),
     ]
 

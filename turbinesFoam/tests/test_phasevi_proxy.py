@@ -138,6 +138,10 @@ def test_serial_chain():
     )
     assert command[0] == "sbatch"
     assert f"--partition={proxy.DEV_QUEUE}" in command
+    # Slurm spools the script, so the harness directory must be exported.
+    assert any(
+        part.startswith("--export=ALL,PROXY_SCRIPTS_DIR=") for part in command
+    )
     assert not any(part == "--array" for part in command)
     assert not any("--array" in part for part in command)
 
