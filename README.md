@@ -96,6 +96,14 @@ experimental anchors and per-directory data provenance.
 - The mesh-backed variant tests model form, not resolved chordwise physics: at
   every affordable mesh the imported surface is sub-grid, and the Gaussian
   kernel is documented as an ablation of the kernel/width confound.
+- **Rotational augmentation (Du–Selig 3D stall delay):** the shared actuator
+  element chain supports an additive, default-off `rotationalAugmentation` block
+  (`model DuSelig`, `a=b=d=1`; Yang & Sotiropoulos Eqs. 9–12) inherited by ALM,
+  ASM and the mesh surface. It is enabled for the Phase VI proxy through
+  `--rotational-augmentation on`, never by the committed case. The correction is
+  applied literally with no invented clamp and no free-parameter calibration;
+  claims are limited to **trend, stall onset and agreement within the documented
+  comparison bands** — no agreement better than those bands is promised a priori.
 - See [turbinesFoam/validation/phaseVI/README.md](turbinesFoam/validation/phaseVI/README.md)
   for setup, metric definitions, tolerance bands, the pre-registered hypothesis
   and the modelling limitations.

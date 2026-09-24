@@ -243,6 +243,101 @@ job — only the 48-rank single-node production array existed.
    directory, and the invalid-`delta` rejection. `--check` on the committed
    default case is unchanged and still passes.
 
+#### 8. Add Du–Selig rotational augmentation (3D stall delay) to the shared blade-load chain
+
+**Files:**
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/actuatorLineElement.{H,C}`
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineSource.C`
+- `turbinesFoam/src/fvOptions/axialFlowTurbineALSource/axialFlowTurbineALSource.C`
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/profileData/profileData.{H,C}`
+- `turbinesFoam/tests/test_rotational_augmentation.py`, `turbinesFoam/tests/conftest.py`
+- `turbinesFoam/tests/rotationalAugmentation/**` (new)
+- `turbinesFoam/README.md`
+
+**Problem:** The 3D stall-delay correction of Yang & Sotiropoulos
+(arXiv:1702.02108v4, Du–Selig Eqs. 9–12) was absent: the shared actuator
+element chain used only the 2D polar, so inboard sections under-predicted lift
+in the diagnosed Phase VI runs.
+
+**Fix:**
+1. `actuatorLineElement` reads an additive, default-off `rotationalAugmentation`
+   block (`active`/`model`/`a`/`b`/`d`; only `DuSelig` registered, unknown model
+   fails loudly) and applies Eqs. 9–12 in place after the static lookup and
+   before dynamic stall, so the element, the no-mesh surface and the mesh-backed
+   surface inherit the correction with no per-model code.
+2. `actuatorLineSource::createElements` injects the local radial station and the
+   rotor radius additively (`radius = rootRadius + rootDistance*(rotorRadius −
+   rootRadius)`); AFTAL forwards the block and both radii into every blade
+   subdict. Absent inputs leave the old dictionaries and output byte-identical.
+3. A degenerate placeholder profile (the Phase VI root `cylinder` has only
+   ±180°) has no zero-lift reference in the `[−10, 10]°` window; the correction
+   is skipped rather than fabricating one, avoiding an empty-list interpolation
+   crash in `profileData`. The lifting S809 sections are corrected as usual.
+4. Pure-Python expected-value tests pin Eqs. 9–12 and the C++ constants, and
+   solver-driven tests cover the applied correction, the default-off byte gate,
+   the radial geometry, pre-stall invariance, absent geometry, unknown model,
+   ALM/ASM inheritance, parallel/restart and the degenerate profile.
+
+#### 9. Guard the Leishman–Beddoes K1/K2 fit against a singular matrix
+
+**Files:**
+- `turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/dynamicStallModels/LeishmanBeddoes/LeishmanBeddoes.C`
+- `turbinesFoam/tests/test_leishman_beddoes_guard.py`, `turbinesFoam/tests/leishmanBeddoes/**` (new)
+- `turbinesFoam/tests/conftest.py`
+
+**Problem:** `calcK1K2` solved the normal-equation matrix with the unguarded
+`simpleMatrix::solve()`; for an all-zero (singular) fit matrix OpenFOAM aborted
+with `FOAM FATAL ERROR: Singular Matrix` — the Phase VI case hit this at
+`t = 0.008 s`.
+
+**Fix:** replaced the unguarded solve with an analytic 2×2 Cramer solve behind a
+scaled determinant guard (`mag(det) > 1e-12*scale`): the well-conditioned branch
+is numerically unchanged, the singular branch warns and falls back to
+`K1 = K2 = 0`. Confined to `calcK1K2`; the fit inputs are not retuned.
+
+#### 10. Render the Phase VI `rotationalAugmentation` switch and root-effects ablation
+
+**Files:**
+- `turbinesFoam/validation/phaseVI/config/case.yaml`
+- `turbinesFoam/validation/phaseVI/tools/case_config.py`, `tools/generate_case.py`
+- `turbinesFoam/validation/phaseVI/case/system/fvOptions.{ALM,ASM,ASM-MESH}`
+- `turbinesFoam/tests/test_phasevi_case.py`
+- `turbinesFoam/validation/phaseVI/README.md`
+
+**Problem:** The Phase VI case had no way to enable the augmentation or to
+ablate the Glauert root effect from the YAML single source of truth.
+
+**Fix:** `actuator.rotational_augmentation` (`active: false`, `model: DuSelig`,
+`a/b/d: 1`) renders an identical `rotationalAugmentation` block at the
+**rotor-coeffs level** (mirroring `dynamicStall`, so AFTAL forwards it with the
+radial geometry) in all three twins; `--rotational-augmentation {on,off}` and
+`--root-effects {on,off}` expose render-time toggles, the committed default
+stays augmentation-off/root-on, and the case/render tests pin the twins, the
+switch, the ablation and the committed render.
+
+#### 11. Add the committed 0.25-rev D/32 proxy verification harness
+
+**Files:**
+- `turbinesFoam/validation/phaseVI/scripts/proxyRotationalAugmentation.py`, `scripts/proxyRotationalAugmentation.sh` (new)
+- `turbinesFoam/tests/test_phasevi_proxy.py` (new)
+- `turbinesFoam/validation/phaseVI/README.md`
+
+**Problem:** Verifying the augmentation fix on the full production mesh is
+unaffordable; there was no committed, reproducible cheap proxy with a control
+gate and fail-loud criteria.
+
+**Fix:** a committed harness renders the three-variant matrix (`control`,
+`augmentation-on`, `augmentation-on + root-off`) at 0.25 rev on the D/32 mesh at
+7 and 13 m/s, copies each variant into a self-contained package, and chains the
+runs **serially** on the authorized development queue (never a Slurm array).
+`--check`/`--dry-run` submits nothing; `--submit` refuses any production queue.
+The evaluation enforces the mandatory U13 control gate (integrated `cp` within
+15 % of `−0.0411`, i.e. `[−0.0473, −0.0349]`), reports the integrated
+`cp`/`ct`/torque as the primary signal and the spanwise `c_ref_t` sign as
+secondary, documents the ≈2× `c_ref_t`-vs-measured-CT definitional caveat
+without fixing it, and exits non-zero naming the offending variant/metric on a
+miss. The production campaign stays prepared-only.
+
 ---
 
 ### Bug Fixes (FSI Physics)

@@ -329,24 +329,28 @@ are never submitted by this change; see the staged plan above.
 
 `actuator.rotational_augmentation` in `config/case.yaml` is rendered into every
 `fvOptions` twin as an identical `rotationalAugmentation` block at the
-element-key indentation. It is deliberately **not** a blade key, so the three
-twins stay identical except for their element/surface keys:
+**rotor-coeffs level**, mirroring `dynamicStall`. It is deliberately **not** a
+blade key, so the three twins stay identical except for their element/surface
+keys, and AFTAL forwards the block with the `rotorRadius`/`rootRadius` the
+element needs:
 
 ```
-                rotationalAugmentation
-                {
-                    active off;
-                    model DuSelig;
-                    a 1;
-                    b 1;
-                    d 1;
-                }
+        rotationalAugmentation
+        {
+            active off;
+            model DuSelig;
+            a 1;
+            b 1;
+            d 1;
+        }
 ```
 
 The committed default is **off**; the renderer turns it on only through
 `--rotational-augmentation on`. The block is additive: with it absent or
 `active off`, the element/line/turbine output is byte-identical to the
-pre-change chain.
+pre-change chain. A blade-level block would bypass AFTAL's forwarding and the
+correction would be silently skipped (the proxy matrix caught exactly this), so
+the block must stay at the rotor level.
 
 **Formulation.** When active, the shared element chain applies the Du–Selig 3D
 stall-delay correction in place, after the static coefficient lookup and before
@@ -389,6 +393,35 @@ and chains them serially on the authorized development queue. The production
 campaign stays **prepared-only**: no automated step of this change submits,
 cancels or modifies a production job, and the committed case itself keeps the
 augmentation off.
+
+**Control gate and fail-loud criteria.** The harness evaluates the variants in a
+fixed order and exits non-zero when a criterion is missed, naming the offending
+variant and metric:
+
+- *Control gate (mandatory, first).* The U13 `control` integrated `cp` must lie
+  within 15 % of the converged baseline `cp = −0.0411`, i.e. in
+  `[−0.0473, −0.0349]`. No other variant is interpreted until the control
+  reproduces the failure.
+- *Primary signal.* The integrated turbine `cp`/`ct`/torque over the short window.
+  At U13 `augmentation-on` must make `cp` and `ct` **positive**; at U7 the
+  `augmentation-on + root-off` ablation must **shrink** the −16 % power deficit
+  toward or inside the ±15 % band.
+- *Secondary signal.* The spanwise `c_ref_t` **sign** at 30/47/63/80/95 % span.
+  At U13 mid-span `c_ref_t` must be `≥ +0.02` (above the `0.01` short-window
+  drift tolerance), versus the control's `−0.063`.
+
+**Comparison caveat (`c_ref_t` vs measured CT).** The simulated spanwise
+`c_ref_t` runs ≈2× the measured `CT` while the integrated torque is low; this
+definitional mismatch is recorded here and **not fixed** by this change. The
+proxy therefore uses the integrated `cp`/`ct`/torque as the **primary** signal
+and the `c_ref_t` **sign** only as secondary.
+
+**Degenerate root profile.** The Phase VI blade's root elements use a two-point
+`cylinder` placeholder (only ±180°). The Du–Selig correction is defined relative
+to the profile's zero-lift reference, which does not exist for that table, so
+`correctRotationalAugmentation()` skips any profile without a station in the
+`[−10, 10]°` reference window rather than fabricating one (no invented clamp).
+The lifting S809 sections are corrected as usual.
 
 ## Comparison
 
