@@ -194,6 +194,32 @@ def test_no_production_submission(cfg):
     assert "production.slurm" not in source
 
 
+def test_prepare_isolates_variant_toggles(tmp_path, cfg, monkeypatch):
+    """Each prepared copy keeps its own fvOptions despite the hardlink base."""
+    def fake_base(work_root, speed, ranks, force):
+        base = proxy.base_run_dir(work_root, speed)
+        (base / "system").mkdir(parents=True)
+        # The base twin is hardlinked into every variant; a shared inode would
+        # make the last write win.
+        (base / "system" / "fvOptions").write_text("base\n")
+        (base / "0").mkdir()
+        (base / "constant" / "polyMesh").mkdir(parents=True)
+        (base / "constant" / "polyMesh" / "points").write_text("mesh\n")
+        return base
+
+    monkeypatch.setattr(proxy, "prepare_base", fake_base)
+    prepared = proxy.prepare(tmp_path, cfg, proxy.RUN_RANKS)
+    assert len(prepared) == len(proxy.SPEEDS) * len(proxy.VARIANTS)
+    for speed in proxy.SPEEDS:
+        for variant in proxy.VARIANTS:
+            vdir = proxy.variant_dir(tmp_path, speed, variant)
+            text = (vdir / "system" / "fvOptions").read_text()
+            proxy.assert_rendered_toggle(text, variant)
+            # The base twin must stay untouched (the inode was not shared).
+            base = proxy.base_run_dir(tmp_path, speed)
+            assert (base / "system" / "fvOptions").read_text() == "base\n"
+
+
 def test_measured_anchors():
     """The measured U7/U13 anchors used by the gates are read from the case."""
     measured = proxy.load_measured()

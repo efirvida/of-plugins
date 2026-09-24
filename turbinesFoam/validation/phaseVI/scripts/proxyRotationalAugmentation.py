@@ -172,6 +172,41 @@ def toggle_stripped(text: str) -> list[str]:
     ]
 
 
+def _extract_block(text: str, header: str) -> str:
+    """Return the ``header { ... }`` block with brace matching (line-based)."""
+    out: list[str] = []
+    depth = 0
+    collecting = False
+    for line in text.splitlines():
+        if not collecting and line.strip() == header:
+            collecting = True
+            depth = 0
+        if collecting:
+            out.append(line)
+            depth += line.count("{") - line.count("}")
+            if "{" in line and depth <= 0:
+                break
+    return "\n".join(out)
+
+
+def assert_rendered_toggle(text: str, variant: dict[str, Any]) -> None:
+    """The rendered `fvOptions` must carry exactly the variant's toggles."""
+    expected_active = "active on;" if variant["augmentation"] else "active off;"
+    # The rotationalAugmentation block is the only one that renders the
+    # `active on|off;` + `model DuSelig;` pair.
+    block = _extract_block(text, "rotationalAugmentation")
+    if expected_active not in block or "model DuSelig;" not in block:
+        raise AssertionError(
+            f"variant {variant['name']!r}: rotationalAugmentation block does "
+            f"not render {expected_active!r}"
+        )
+    expected_root = "rootEffects on;" if variant["root"] else "rootEffects off;"
+    if expected_root not in text:
+        raise AssertionError(
+            f"variant {variant['name']!r}: expected {expected_root!r}"
+        )
+
+
 def variant_matrix(cfg, case_dir: Path | None = None) -> dict[tuple[str, str], str]:
     case_dir = case_dir if case_dir is not None else PACKAGE / "case"
     return {
@@ -198,13 +233,7 @@ def assert_variants_share_keys(cfg, case_dir: Path | None = None) -> None:
                 )
         # The toggles themselves must actually be present and distinct.
         for variant in VARIANTS:
-            block = matrix[(speed, variant["name"])]
-            expected = "active on;" if variant["augmentation"] else "active off;"
-            if expected not in block:
-                raise AssertionError(
-                    f"variant {variant['name']!r} at U{speed} does not render "
-                    f"{expected!r}"
-                )
+            assert_rendered_toggle(matrix[(speed, variant["name"])], variant)
         root_off = matrix[(speed, "augmentation-on-root-off")]
         if "rootEffects off;" not in root_off:
             raise AssertionError(
@@ -322,7 +351,14 @@ def prepare(work_root: Path, cfg, ranks: int, force: bool = False) -> list[Path]
                 shutil.rmtree(post)
             post.mkdir(parents=True, exist_ok=True)
             fv_options = render_variant(cfg, speed, vdir, variant)
-            (vdir / "system" / "fvOptions").write_text(fv_options, encoding="utf-8")
+            # The package copy hardlinks the base files; unlink the twin first
+            # so the variant's write does not silently rewrite the shared inode
+            # (which would make every variant render the last write).
+            fv_path = vdir / "system" / "fvOptions"
+            if fv_path.exists():
+                fv_path.unlink()
+            fv_path.write_text(fv_options, encoding="utf-8")
+            assert_rendered_toggle(fv_path.read_text(encoding="utf-8"), variant)
             manifest = {
                 "speed_m_s": float(speed),
                 "variant": variant["name"],
