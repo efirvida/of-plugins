@@ -2,21 +2,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Serial driver for the committed 0.25-rev D/32 rotational-augmentation proxy.
-# The development queue has MaxSubmit=1, so all three variants at both speeds
-# run inside this single job, chained serially; it is never submitted as an
-# array. `proxyRotationalAugmentation.py --run` prepares each self-contained
-# variant copy and executes `decomposePar` + `mpirun` for it in order.
+# The development queue has a 20-minute time limit and MaxSubmit=1, so the
+# harness runs the variants serially inside one job. Submit one chunk per job
+# and chain the chunks (`SPEED:VARIANT` arguments), for example:
 #
-# Submitted only through the authorized harness path, which refuses any
-# production queue. The production campaign stays prepared-only.
+#   sbatch proxyRotationalAugmentation.sh 13:control 13:augmentation-on
+#   sbatch proxyRotationalAugmentation.sh 13:augmentation-on-root-off 7:control
+#   sbatch proxyRotationalAugmentation.sh 7:augmentation-on 7:augmentation-on-root-off
+#
+# The variants are never submitted as a Slurm array. Submitted only through the
+# authorized harness path, which refuses any production queue. The production
+# campaign stays prepared-only.
 #
 # Usage:
-#   sbatch validation/phaseVI/scripts/proxyRotationalAugmentation.sh
+#   sbatch validation/phaseVI/scripts/proxyRotationalAugmentation.sh [SPEED:VARIANT ...]
 #SBATCH -p sequana_cpu_dev
 #SBATCH --ntasks=48
 #SBATCH --nodes=1
 #SBATCH -J phaseVI-proxy-ra
-#SBATCH --time=01:30:00
+#SBATCH --time=00:20:00
 #SBATCH -e %j.err
 #SBATCH -o %j.out
 
@@ -40,4 +44,10 @@ export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$WM_PROJECT_DIR/platforms/$WM_OPTIONS/l
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-python3 "$here/proxyRotationalAugmentation.py" --run --ranks 48
+step_args=""
+for step in "$@"; do
+    step_args="$step_args --step $step"
+done
+
+# shellcheck disable=SC2086
+python3 "$here/proxyRotationalAugmentation.py" --run --ranks 48 $step_args

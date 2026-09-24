@@ -220,6 +220,26 @@ def test_prepare_isolates_variant_toggles(tmp_path, cfg, monkeypatch):
             assert (base / "system" / "fvOptions").read_text() == "base\n"
 
 
+def test_step_selector():
+    """A chunk selects prepared steps; the default is the full serial chain."""
+    assert proxy.parse_step("13:augmentation-on") == {
+        "speed": "13",
+        "variant": "augmentation-on",
+    }
+    with pytest.raises(ValueError):
+        proxy.parse_step("13")
+    with pytest.raises(ValueError):
+        proxy.parse_step("99:control")
+    with pytest.raises(ValueError):
+        proxy.parse_step("7:unknown")
+    assert len(proxy.selected_steps(None)) == len(proxy.SPEEDS) * 3
+    chunk = [proxy.parse_step("13:control"), proxy.parse_step("7:control")]
+    assert proxy.selected_steps(chunk) == [
+        {"speed": "13", "variant": "control"},
+        {"speed": "7", "variant": "control"},
+    ]
+
+
 def test_measured_anchors():
     """The measured U7/U13 anchors used by the gates are read from the case."""
     measured = proxy.load_measured()

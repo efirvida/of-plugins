@@ -337,12 +337,19 @@ def prepare_base(work_root: Path, speed: str, ranks: int, force: bool) -> Path:
 
 
 def prepare(work_root: Path, cfg, ranks: int, force: bool = False) -> list[Path]:
-    """Render the self-contained variant copies; never submits a job."""
+    """Render the self-contained variant copies; never submits a job.
+
+    Idempotent: an existing variant package is kept unless ``force`` is set, so
+    a chunked serial run does not wipe the results of an earlier chunk.
+    """
     prepared: list[Path] = []
     for speed in SPEEDS:
         base = prepare_base(work_root, speed, ranks, force)
         for variant in VARIANTS:
             vdir = variant_dir(work_root, speed, variant)
+            if vdir.is_dir() and not force:
+                prepared.append(vdir)
+                continue
             if vdir.exists():
                 shutil.rmtree(vdir)
             shutil.copytree(base, vdir, copy_function=os.link)
@@ -376,43 +383,71 @@ def prepare(work_root: Path, cfg, ranks: int, force: bool = False) -> list[Path]
     return prepared
 
 
-def run_variants(work_root: Path, ranks: int | None = None) -> int:
-    """Run each variant serially. Requires a loaded OpenFOAM environment."""
+def parse_step(text: str) -> dict[str, str]:
+    """Parse a ``SPEED:VARIANT`` step selector (dev-queue chunking)."""
+    if ":" not in text:
+        raise ValueError(f"step {text!r} must be SPEED:VARIANT")
+    speed, _, name = text.partition(":")
+    if speed not in SPEEDS:
+        raise ValueError(f"step {text!r}: speed must be one of {list(SPEEDS)}")
+    if name not in {variant["name"] for variant in VARIANTS}:
+        raise ValueError(
+            f"step {text!r}: variant must be one of "
+            f"{[variant['name'] for variant in VARIANTS]}"
+        )
+    return {"speed": speed, "variant": name}
+
+
+def selected_steps(steps: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    """The steps to run: the explicit chunk, or the full serial chain."""
+    if steps:
+        return list(steps)
+    return execution_plan()["steps"]
+
+
+def run_variants(
+    work_root: Path,
+    ranks: int | None = None,
+    steps: list[dict[str, str]] | None = None,
+) -> int:
+    """Run each selected variant serially. Requires loaded OpenFOAM."""
     if ranks is None:
         ranks = int(os.environ.get("SLURM_NTASKS", RUN_RANKS))
     for tool in ("decomposePar", "mpirun"):
         if shutil.which(tool) is None:
             raise RuntimeError(f"{tool} not found: load the OpenFOAM environment")
+    by_name = {variant["name"]: variant for variant in VARIANTS}
     failure = 0
-    for speed in SPEEDS:
-        for variant in VARIANTS:
-            vdir = variant_dir(work_root, speed, variant)
-            if not (vdir / "system" / "fvOptions").is_file():
-                raise RuntimeError(f"{vdir} is not prepared; run --prepare first")
-            post = vdir / "postProcessing"
-            if post.exists():
-                shutil.rmtree(post)
-            print(f"[proxy] {speed} m/s {variant['name']}: decomposePar", flush=True)
-            _run(["decomposePar", "-force"], cwd=vdir)
-            print(f"[proxy] {speed} m/s {variant['name']}: mpirun -np {ranks}",
-                  flush=True)
-            result = _run(
-                ["mpirun", "-np", str(ranks), "pimpleFoam", "-parallel"],
-                cwd=vdir,
-                check=False,
+    for step in selected_steps(steps):
+        speed = step["speed"]
+        variant = by_name[step["variant"]]
+        vdir = variant_dir(work_root, speed, variant)
+        if not (vdir / "system" / "fvOptions").is_file():
+            raise RuntimeError(f"{vdir} is not prepared; run --prepare first")
+        post = vdir / "postProcessing"
+        if post.exists():
+            shutil.rmtree(post)
+        print(f"[proxy] {speed} m/s {variant['name']}: decomposePar", flush=True)
+        _run(["decomposePar", "-force"], cwd=vdir)
+        print(f"[proxy] {speed} m/s {variant['name']}: mpirun -np {ranks}",
+              flush=True)
+        result = _run(
+            ["mpirun", "-np", str(ranks), "pimpleFoam", "-parallel"],
+            cwd=vdir,
+            check=False,
+        )
+        if result.returncode != 0:
+            failure = 1
+            print(
+                f"[proxy] {speed} m/s {variant['name']}: solver failed "
+                f"rc={result.returncode}",
+                file=sys.stderr,
+                flush=True,
             )
-            if result.returncode != 0:
-                failure = 1
-                print(
-                    f"[proxy] {speed} m/s {variant['name']}: solver failed "
-                    f"rc={result.returncode}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            # Keep the variant directory small: postProcessing is what the
-            # evaluation reads, the decomposed mesh is not needed again.
-            for processor in sorted(vdir.glob("processor*")):
-                shutil.rmtree(processor, ignore_errors=True)
+        # Keep the variant directory small: postProcessing is what the
+        # evaluation reads, the decomposed mesh is not needed again.
+        for processor in sorted(vdir.glob("processor*")):
+            shutil.rmtree(processor, ignore_errors=True)
     return failure
 
 
@@ -639,6 +674,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="submit the serial chain to the development queue")
     parser.add_argument("--queue", default=DEV_QUEUE)
     parser.add_argument("--ranks", type=int, default=RUN_RANKS)
+    parser.add_argument("--step", action="append", default=None, metavar="SPEED:VARIANT",
+                        help="run only this prepared step (repeatable, for "
+                             "chunking across the 20-minute dev queue); the "
+                             "default runs the full serial chain")
     parser.add_argument("--force", action="store_true",
                         help="re-prepare the base case even if it exists")
     parser.add_argument("--out", type=Path, default=None,
@@ -664,10 +703,11 @@ def main(argv: list[str] | None = None) -> int:
         return subprocess.run(command, check=False).returncode
 
     if args.prepare or args.run:
+        steps = [parse_step(step) for step in args.step] if args.step else None
         if args.run:
-            status = prepare(work_root, cfg, args.ranks, force=args.force)
-            print(f"prepared {len(status)} variants under {work_root}")
-            return run_variants(work_root, args.ranks)
+            prepared = prepare(work_root, cfg, args.ranks, force=args.force)
+            print(f"prepared {len(prepared)} variants under {work_root}")
+            return run_variants(work_root, args.ranks, steps)
         prepared = prepare(work_root, cfg, args.ranks, force=args.force)
         print(f"prepared {len(prepared)} variants under {work_root}")
         return 0
