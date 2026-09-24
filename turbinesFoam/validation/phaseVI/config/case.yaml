@@ -198,6 +198,16 @@ stages:
     executes: false
 
 actuator:
+  # Du-Selig rotational augmentation (3D stall delay), rendered into every
+  # `fvOptions` twin. The committed default is off; the Phase VI proxy turns it
+  # on as a render-time variant. `model` is the only registered name and a/b/d
+  # are the paper constants (no free-parameter calibration).
+  rotational_augmentation:
+    active: false
+    model: DuSelig
+    a: 1
+    b: 1
+    d: 1
   end_effects:
     active: true
     model: Glauert

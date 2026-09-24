@@ -172,6 +172,29 @@ def validate_config(cfg: dict[str, Any]) -> None:
     if not str(iddes.get("div_phi_U", "")).strip():
         raise ValueError("iddes.div_phi_U must not be empty")
 
+    actuator = cfg.get("actuator")
+    if not isinstance(actuator, dict):
+        raise ValueError("actuator must define the end effects and augmentation")
+    augmentation = actuator.get("rotational_augmentation")
+    if not isinstance(augmentation, dict):
+        raise ValueError(
+            "actuator.rotational_augmentation must define the augmentation switch"
+        )
+    if not isinstance(augmentation.get("active"), bool):
+        raise ValueError("actuator.rotational_augmentation.active must be a boolean")
+    if str(augmentation.get("model")) != "DuSelig":
+        raise ValueError("actuator.rotational_augmentation.model must be DuSelig")
+    for field in ("a", "b", "d"):
+        if float(augmentation.get(field, 0.0)) <= 0.0:
+            raise ValueError(
+                f"actuator.rotational_augmentation.{field} must be positive"
+            )
+    end_effects = actuator.get("end_effects")
+    if not isinstance(end_effects, dict) or not isinstance(
+        end_effects.get("root"), bool
+    ):
+        raise ValueError("actuator.end_effects.root must be a boolean")
+
 
 def check_solver(solver: str) -> str:
     """Validate and return a solver variant name."""

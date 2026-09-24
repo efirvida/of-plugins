@@ -12,6 +12,7 @@ Usage:
                      [--domain long|squat] [--profile production|smoke]
                      [--solver urans|iddes] [--n-chordwise N] [--ranks N]
                      [--surface-kernel cosine|gaussian]
+                     [--rotational-augmentation on|off] [--root-effects on|off]
                      [--case-dir DIR] [--end-revs FLOAT]
                      [--start-from startTime|latestTime] [--check]
 
@@ -489,6 +490,8 @@ def render_fv_options(
     n_chordwise: int | None = None,
     surface_geometry: str | None = None,
     surface_kernel: str | None = None,
+    rotational_augmentation: dict[str, Any] | None = None,
+    root_effects: bool | None = None,
 ) -> str:
     """ALM/ASM/ASM-mesh twins rendered from one function.
 
@@ -501,6 +504,13 @@ def render_fv_options(
     defaults to the paper cosine kernel and only `gaussian` renders a `kernel`
     key. `projectElementForce` is never rendered: the blade source injects it
     into the element dicts when a surface is configured (design D3).
+
+    `rotational_augmentation` defaults to the `actuator.rotational_augmentation`
+    block; when configured (always, for the committed case) the
+    `rotationalAugmentation` block is rendered identically in all three twins at
+    the element-key indentation, so the twins stay identical except for the
+    blade keys. `root_effects` defaults to `actuator.end_effects.root` and is
+    the render-time ablation toggle (design D5, §6.2).
     """
     values = kinematics(cfg, speed, mesh, sequence)
     turbine = cfg["turbine"]
@@ -530,6 +540,24 @@ def render_fv_options(
             blade_keys += "                kernel gaussian;\n"
     dynamic = actuator["dynamic_stall"]
     end_effects = actuator["end_effects"]
+    augmentation = (
+        actuator.get("rotational_augmentation")
+        if rotational_augmentation is None
+        else rotational_augmentation
+    )
+    if augmentation is not None:
+        active = bool(augmentation["active"])
+        blade_keys += (
+            "                rotationalAugmentation\n"
+            "                {\n"
+            f"                    active {'on' if active else 'off'};\n"
+            f"                    model {augmentation['model']};\n"
+            f"                    a {float(augmentation['a']):.8g};\n"
+            f"                    b {float(augmentation['b']):.8g};\n"
+            f"                    d {float(augmentation['d']):.8g};\n"
+            "                }\n"
+        )
+    root = bool(end_effects["root"]) if root_effects is None else bool(root_effects)
     hub_rows = "\n".join(
         "                (" + " ".join(f"{value:.9g}" for value in row) + ")"
         for row in hub_element_rows()
@@ -565,7 +593,7 @@ def render_fv_options(
             GlauertCoeffs
             {{
                 tipEffects {'on' if end_effects['tip'] else 'off'};
-                rootEffects {'on' if end_effects['root'] else 'off'};
+                rootEffects {'on' if root else 'off'};
             }}
         }}
 
@@ -639,6 +667,8 @@ def outputs(
     n_chordwise: int | None = None,
     ranks: int | None = None,
     surface_kernel: str = "cosine",
+    rotational_augmentation: dict[str, Any] | None = None,
+    root_effects: bool | None = None,
 ) -> dict[Path, str]:
     system = case_dir / "system"
     constant = case_dir / "constant"
@@ -653,10 +683,14 @@ def outputs(
         system / "fvSchemes": render_fv_schemes(cfg, solver),
         system / "fvSolution": render_fv_solution(cfg),
         system / "fvOptions.ALM": render_fv_options(
-            cfg, speed, mesh, case_dir, ALM_ELEMENT, sequence, n_chordwise
+            cfg, speed, mesh, case_dir, ALM_ELEMENT, sequence, n_chordwise,
+            rotational_augmentation=rotational_augmentation,
+            root_effects=root_effects,
         ),
         system / "fvOptions.ASM": render_fv_options(
-            cfg, speed, mesh, case_dir, ASM_ELEMENT, sequence, n_chordwise
+            cfg, speed, mesh, case_dir, ASM_ELEMENT, sequence, n_chordwise,
+            rotational_augmentation=rotational_augmentation,
+            root_effects=root_effects,
         ),
         system / "fvOptions.ASM-MESH": render_fv_options(
             cfg,
@@ -668,6 +702,8 @@ def outputs(
             n_chordwise,
             surface_geometry=SURFACE_GEOMETRY,
             surface_kernel=surface_kernel,
+            rotational_augmentation=rotational_augmentation,
+            root_effects=root_effects,
         ),
         constant / "transportProperties": render_transport_properties(cfg),
         constant / "turbulenceProperties": render_turbulence_properties(cfg, solver),
@@ -751,6 +787,20 @@ def main(argv: list[str] | None = None) -> int:
              "(the default; no key is rendered), gaussian is the ablation "
              "and renders `kernel gaussian;`",
     )
+    parser.add_argument(
+        "--rotational-augmentation",
+        choices=("on", "off"),
+        default="off",
+        help="render the Du-Selig rotational-augmentation switch; the default "
+             "off matches the committed case (config/case.yaml)",
+    )
+    parser.add_argument(
+        "--root-effects",
+        choices=("on", "off"),
+        default=None,
+        help="render the Glauert root-effect setting; default from "
+             "config/case.yaml (on). `off` is the render-time ablation",
+    )
     parser.add_argument("--case-dir", type=Path, default=DEFAULT_CASE_DIR)
     parser.add_argument("--end-revs", type=float, default=None)
     parser.add_argument("--start-from", choices=START_FROM_CHOICES, default="startTime")
@@ -764,6 +814,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = load_config(args.config)
         case_dir = args.case_dir.resolve()
+        augmentation = dict(cfg["actuator"]["rotational_augmentation"])
+        augmentation["active"] = args.rotational_augmentation == "on"
+        root_effects = (
+            None if args.root_effects is None else args.root_effects == "on"
+        )
         rendered = outputs(
             cfg,
             args.mesh,
@@ -778,6 +833,8 @@ def main(argv: list[str] | None = None) -> int:
             n_chordwise=args.n_chordwise,
             ranks=args.ranks,
             surface_kernel=args.surface_kernel,
+            rotational_augmentation=augmentation,
+            root_effects=root_effects,
         )
     except (KeyError, ValueError) as exc:
         print(f"case generation error: {exc}", file=sys.stderr)

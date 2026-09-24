@@ -58,6 +58,14 @@ turbine
                 elementType actuatorSurfaceElement;
                 nChordwise 5;
                 surfaceGeometry "constant/triSurface/phaseVI_blade.stl";
+                rotationalAugmentation
+                {
+                    active off;
+                    model DuSelig;
+                    a 1;
+                    b 1;
+                    d 1;
+                }
                 nElements 50;
                 elementProfiles
                 (

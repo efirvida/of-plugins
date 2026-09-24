@@ -57,6 +57,14 @@ turbine
                 writeElementPerf true;
                 elementType actuatorSurfaceElement;
                 nChordwise 5;
+                rotationalAugmentation
+                {
+                    active off;
+                    model DuSelig;
+                    a 1;
+                    b 1;
+                    d 1;
+                }
                 nElements 50;
                 elementProfiles
                 (

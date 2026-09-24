@@ -84,6 +84,12 @@ def test_config_schema(cfg):
     assert cfg["solver"]["adjust_time_step"] is False
     solver = cfg["solver"]
     assert (solver["discard_revolutions"], solver["end_revolutions"]) == (4, 12)
+    # Rotational augmentation: committed default off, paper constants only.
+    augmentation = cfg["actuator"]["rotational_augmentation"]
+    assert augmentation["active"] is False
+    assert augmentation["model"] == "DuSelig"
+    assert (augmentation["a"], augmentation["b"], augmentation["d"]) == (1, 1, 1)
+    assert isinstance(cfg["actuator"]["end_effects"]["root"], bool)
 
 
 def test_mesh_arithmetic_and_cell_counts(cfg):
@@ -222,6 +228,108 @@ def test_twins_differ_only_in_blade_keys(cfg):
     )
     assert "surfaceGeometry" in block(committed["ASM-MESH"], "blade1")
     assert "$blade1;" in block(committed["ASM-MESH"], "blade2")
+
+    # The augmentation block is present and identical in every twin and every
+    # committed file: it is not a blade key, so stripping the blade keys must
+    # leave it untouched and identical.
+    augmentation_blocks = {
+        block(text, "rotationalAugmentation")
+        for text in (alm, asm, asm_mesh, gaussian)
+    }
+    assert len(augmentation_blocks) == 1
+    assert "active off;" in augmentation_blocks.pop()
+    committed_augmentation = {
+        block(text, "rotationalAugmentation") for text in committed.values()
+    }
+    assert len(committed_augmentation) == 1
+
+
+def test_rotational_augmentation_rendered(cfg, tmp_path):
+    """The switch renders on/off identically across the twins; default off."""
+    constants = {"active": True, "model": "DuSelig", "a": 1, "b": 1, "d": 1}
+
+    def render(element_type, **kwargs):
+        return generate_case.render_fv_options(
+            cfg,
+            "7",
+            "coarse",
+            PACKAGE / "case",
+            element_type,
+            rotational_augmentation=constants,
+            **kwargs,
+        )
+
+    alm = block(render(generate_case.ALM_ELEMENT), "rotationalAugmentation")
+    asm = block(render(generate_case.ASM_ELEMENT), "rotationalAugmentation")
+    asm_mesh = block(
+        render(
+            generate_case.ASM_ELEMENT,
+            surface_geometry=generate_case.SURFACE_GEOMETRY,
+        ),
+        "rotationalAugmentation",
+    )
+    assert alm == asm == asm_mesh
+    for key in ("active on;", "model DuSelig;", "a 1;", "b 1;", "d 1;"):
+        assert key in alm
+
+    # The committed default renders the same block with the switch off.
+    committed = (PACKAGE / "case" / "system" / "fvOptions.ALM").read_text()
+    default = block(committed, "rotationalAugmentation")
+    assert "active off;" in default
+    assert "model DuSelig;" in default
+    for key in ("a 1;", "b 1;", "d 1;"):
+        assert key in default
+
+    # The CLI toggle reaches every rendered twin.
+    case_dir = tmp_path / "case"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PACKAGE / "tools" / "generate_case.py"),
+            "--rotational-augmentation", "on",
+            "--case-dir", str(case_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    for name in ("ALM", "ASM", "ASM-MESH"):
+        rendered = (case_dir / "system" / f"fvOptions.{name}").read_text()
+        assert "active on;" in block(rendered, "rotationalAugmentation")
+
+
+def test_root_effect_ablation_rendered(cfg, tmp_path):
+    """The root-effect ablation is render-time; the committed default keeps on."""
+    committed = (PACKAGE / "case" / "system" / "fvOptions.ALM").read_text()
+    assert "rootEffects on;" in block(committed, "GlauertCoeffs")
+
+    ablation = generate_case.render_fv_options(
+        cfg,
+        "7",
+        "coarse",
+        PACKAGE / "case",
+        generate_case.ALM_ELEMENT,
+        root_effects=False,
+    )
+    assert "rootEffects off;" in block(ablation, "GlauertCoeffs")
+    assert "rootEffects on;" not in ablation
+    # The tip effect is not part of the ablation.
+    assert "tipEffects on;" in ablation
+
+    case_dir = tmp_path / "case"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PACKAGE / "tools" / "generate_case.py"),
+            "--root-effects", "off",
+            "--case-dir", str(case_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    rendered = (case_dir / "system" / "fvOptions.ALM").read_text()
+    assert "rootEffects off;" in block(rendered, "GlauertCoeffs")
 
 
 def test_asm_mesh_selection(cfg, tmp_path):
@@ -549,6 +657,19 @@ def test_generated_case_is_current(cfg):
     )
     committed = (PACKAGE / "case" / "system" / "fvOptions.ASM-MESH").read_text()
     assert committed == rendered
+
+    # The other two committed twins are their in-memory renders too.
+    for name, element_type in (
+        ("ALM", generate_case.ALM_ELEMENT),
+        ("ASM", generate_case.ASM_ELEMENT),
+    ):
+        rendered_twin = generate_case.render_fv_options(
+            cfg, "7", "coarse", PACKAGE / "case", element_type
+        )
+        committed_twin = (
+            PACKAGE / "case" / "system" / f"fvOptions.{name}"
+        ).read_text()
+        assert committed_twin == rendered_twin
 
     result = subprocess.run(
         [sys.executable, str(PACKAGE / "tools" / "generate_case.py"), "--check"],

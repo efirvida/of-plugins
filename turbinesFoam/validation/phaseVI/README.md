@@ -78,7 +78,9 @@ python3 tools/generate_case.py --check    # exit 1 on missing/stale, never write
 
 `--mesh coarse|fine|ultra`, `--speed <7|10|13|15|20|25>`,
 `--domain long|squat`, `--sequence H|S`, `--profile production|smoke`,
-`--solver urans|iddes`, `--n-chordwise N`, `--ranks N`, `--case-dir DIR`,
+`--solver urans|iddes`, `--n-chordwise N`, `--ranks N`,
+`--surface-kernel cosine|gaussian`, `--rotational-augmentation on|off`,
+`--root-effects on|off`, `--case-dir DIR`,
 `--end-revs FLOAT`, `--start-from startTime|latestTime`.
 Rendered files carry a "Generated from config/case.yaml" banner; `case/` is
 the only committed copy and hand edits are detected by `--check`.
@@ -322,6 +324,71 @@ package.
 
 **Prepared-only.** All prepared stages and arrays, including the ASM-mesh array,
 are never submitted by this change; see the staged plan above.
+
+### Rotational augmentation (Du–Selig) and the root-effect ablation
+
+`actuator.rotational_augmentation` in `config/case.yaml` is rendered into every
+`fvOptions` twin as an identical `rotationalAugmentation` block at the
+element-key indentation. It is deliberately **not** a blade key, so the three
+twins stay identical except for their element/surface keys:
+
+```
+                rotationalAugmentation
+                {
+                    active off;
+                    model DuSelig;
+                    a 1;
+                    b 1;
+                    d 1;
+                }
+```
+
+The committed default is **off**; the renderer turns it on only through
+`--rotational-augmentation on`. The block is additive: with it absent or
+`active off`, the element/line/turbine output is byte-identical to the
+pre-change chain.
+
+**Formulation.** When active, the shared element chain applies the Du–Selig 3D
+stall-delay correction in place, after the static coefficient lookup and before
+dynamic stall (`turbinesFoam/src/fvOptions/actuatorLineSource/actuatorLineElement/`),
+so the actuator line, the no-mesh surface and the mesh-backed surface all
+inherit it with no per-model code:
+
+```
+CL,3D = CL,2D + fL (CL,p − CL,2D)
+CD,3D = CD,2D − fD (CD,2D − CD,0)
+fL = (1/2π)[ (1.6(c/r)^a − (c/r)^((d/Λ)(R/r))) / (0.1267b + (c/r)^((d/Λ)(R/r))) − 1 ]
+fD = (1/2π)[ (1.6(c/r)^a − (c/r)^((d/(2Λ))(R/r))) / (0.1267b + (c/r)^((d/(2Λ))(R/r))) − 1 ]
+```
+
+with `CL,p = 2π(α − α0)`, `CD,0` the 2D drag at zero angle of attack,
+`Λ = ΩR/√(U² + (ΩR)²)`, and `a = b = d = 1` (the paper defaults). The exponent
+is `(d/Λ)(R/r)` for `fL` and `(d/(2Λ))(R/r)` for `fD`.
+
+**Sensitivity note and claim boundary.** The correction is applied **literally**
+with no invented clamp and **no free-parameter calibration** (`a=b=d=1` only).
+Near the tip `fL` becomes negative and reduces the corrected lift — a
+published-model characteristic that is recorded, not clamped. The end-effect
+factor is applied **after** the augmentation hook (the paper's order), so the two
+effects are not double-counted. Because the combined Du–Selig + dynamic-stall
+model is not validated here and the affordable meshes are sub-grid, claims are
+limited to trend, stall onset and agreement within the documented comparison
+bands; no agreement better than those bands is promised a priori.
+
+**Root-effect ablation.** `--root-effects off` renders `rootEffects off;` in
+`GlauertCoeffs` as a **render-time** ablation, while the committed default keeps
+`rootEffects on;` and `tipEffects on;`. It changes nothing in the committed case
+or the primary fix; it exists so the end-effect confound is separated from the
+augmentation attribution in the proxy matrix.
+
+**Proxy matrix (W4).** The committed proxy harness
+(`scripts/proxyRotationalAugmentation.py`, W4) renders three variants that differ
+only in the augmentation switch and the root setting — `control` (off, root on),
+`augmentation-on` (on, root on) and `augmentation-on + root-off` (on, root off) —
+and chains them serially on the authorized development queue. The production
+campaign stays **prepared-only**: no automated step of this change submits,
+cancels or modifies a production job, and the committed case itself keeps the
+augmentation off.
 
 ## Comparison
 
